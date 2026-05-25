@@ -1,6 +1,7 @@
 use crate::utils::{cached_regex, get_config_string_list};
 use anitomy_pure::elements::Category;
 use anitomy_pure::Parser;
+use fancy_regex::{Captures as FancyCaptures, Regex as FancyRegex};
 use golia_pinyin::{is_valid_syllable, segment};
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
@@ -319,6 +320,8 @@ static CUSTOMIZATION_RE_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
 static STREAMING_PLATFORM_CACHE: Lazy<Mutex<HashMap<usize, Arc<HashMap<String, String>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static PARSE_OPTIONS_CACHE: Lazy<Mutex<HashMap<usize, Arc<ParseOptions>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static CUSTOM_WORD_RE_CACHE: Lazy<Mutex<HashMap<String, FancyRegex>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 const MEDIA_TYPE_MOVIE: &str = "电影";
@@ -913,39 +916,50 @@ fn parse_custom_word(word: &str) -> Option<(String, Vec<String>)> {
 
 /// 执行自定义识别词正则替换。
 fn replace_regex(title: &str, replaced: &str, replacement: &str) -> (String, bool) {
-    let Ok(regex) = Regex::new(replaced) else {
+    let Some(regex) = cached_fancy_regex(replaced) else {
         return (title.to_string(), false);
     };
-    let count = regex.find_iter(title).count();
-    (regex.replace_all(title, replacement).to_string(), count > 0)
+    let Ok(result) = regex.try_replacen(title, 0, |cap: &FancyCaptures<'_>| {
+        expand_python_replacement(cap, replacement)
+    }) else {
+        return (title.to_string(), false);
+    };
+    let state = matches!(result, std::borrow::Cow::Owned(_));
+    (result.into_owned(), state)
 }
 
 /// 执行自定义识别词集数偏移。
 fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String, bool) {
     if !back.is_empty()
-        && Regex::new(back)
-            .ok()
-            .map(|regex| !regex.is_match(title))
+        && cached_fancy_regex(back)
+            .and_then(|regex| regex.is_match(title).ok())
+            .map(|matched| !matched)
             .unwrap_or(true)
     {
         return (title.to_string(), false);
     }
     if !front.is_empty()
-        && Regex::new(front)
-            .ok()
-            .map(|regex| !regex.is_match(title))
+        && cached_fancy_regex(front)
+            .and_then(|regex| regex.is_match(title).ok())
+            .map(|matched| !matched)
             .unwrap_or(true)
     {
         return (title.to_string(), false);
     }
-    let pattern = format!(r"(?s){}.*?([0-9一二三四五六七八九十]+).*?{}", front, back);
-    let Ok(regex) = Regex::new(&pattern) else {
+    let pattern = format!(
+        r"(?<={}.*?)[0-9一二三四五六七八九十]+(?=.*?{})",
+        front, back
+    );
+    let Some(regex) = cached_fancy_regex(&pattern) else {
         return (title.to_string(), false);
     };
     let mut replacements = BTreeMap::new();
     let mut offset_order_flag = false;
     for cap in regex.captures_iter(title) {
-        let Some(value) = cap.get(1).map(|item| item.as_str()) else {
+        let Ok(cap) = cap else {
+            return (title.to_string(), false);
+        };
+        let Some(value) = cap.get(0).map(|item| item.as_str()) else {
             continue;
         };
         let Some(number) = cn_number_to_i64(value) else {
@@ -975,16 +989,58 @@ fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String
     }
     let mut result = title.to_string();
     for (from, to) in items {
-        let pattern = format!(r"(?s)({}.*?){}(.*?{})", front, regex::escape(&from), back);
-        if let Ok(regex) = Regex::new(&pattern) {
-            result = regex
-                .replace_all(&result, |cap: &Captures<'_>| {
-                    format!("{}{}{}", &cap[1], to, &cap[2])
-                })
-                .to_string();
+        let pattern = format!(r"(?<={}.*?){}(?=.*?{})", front, regex::escape(&from), back);
+        if let Some(regex) = cached_fancy_regex(&pattern) {
+            match regex.try_replacen(&result, 0, to.as_str()) {
+                Ok(replaced) => result = replaced.into_owned(),
+                Err(_) => return (title.to_string(), false),
+            }
         }
     }
     (result, true)
+}
+
+/// 缓存自定义识别词正则，支持用户规则里的 look-around 与反向引用语法。
+fn cached_fancy_regex(pattern: &str) -> Option<FancyRegex> {
+    if let Ok(guard) = CUSTOM_WORD_RE_CACHE.lock() {
+        if let Some(regex) = guard.get(pattern) {
+            return Some(regex.clone());
+        }
+    }
+    let regex = FancyRegex::new(pattern).ok()?;
+    if let Ok(mut guard) = CUSTOM_WORD_RE_CACHE.lock() {
+        guard.insert(pattern.to_string(), regex.clone());
+    }
+    Some(regex)
+}
+
+/// 按 Python regex.sub 的反斜杠分组语义展开替换词。
+fn expand_python_replacement(cap: &FancyCaptures<'_>, replacement: &str) -> String {
+    let mut result = String::new();
+    let mut chars = replacement.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            result.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            result.push('\\');
+            break;
+        };
+        if next.is_ascii_digit() {
+            let mut index = next.to_digit(10).unwrap_or(0) as usize;
+            while let Some(peek) = chars.peek().copied().filter(char::is_ascii_digit) {
+                chars.next();
+                index = index * 10 + peek.to_digit(10).unwrap_or(0) as usize;
+            }
+            if let Some(group) = cap.get(index) {
+                result.push_str(group.as_str());
+            }
+        } else {
+            result.push(next);
+        }
+    }
+    result
 }
 
 /// 计算 EP 偏移表达式，支持 EP+N、EP-N 和纯数字。
@@ -3157,4 +3213,66 @@ fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<PyObject> {
     dict.set_item("episode_group", &meta.episode_group)?;
     dict.set_item("fps", meta.fps)?;
     Ok(dict.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_words;
+
+    /// 验证自定义识别词支持 issue #4 中的变长后视年份替换和前视季替换。
+    #[test]
+    fn custom_words_support_variable_lookbehind_and_lookahead() {
+        let title = "吞噬星空.Swallowed.Star.S07.2026.2160p.WEB-DL.H265.AAC-ADWeb";
+        let words = vec![
+            r"(?<=Swallowed.Star.S07.*)2026 => 2020".to_string(),
+            r"Swallowed.Star.S07(?=.*ADWeb) => Swallowed.Star.S01".to_string(),
+        ];
+
+        let (prepared, applied) = prepare_words(title, &words);
+
+        assert_eq!(
+            prepared,
+            "吞噬星空.Swallowed.Star.S01.2020.2160p.WEB-DL.H265.AAC-ADWeb"
+        );
+        assert_eq!(applied, words);
+    }
+
+    /// 验证普通前视替换仍按 Python 识别词语义生效。
+    #[test]
+    fn custom_words_support_positive_lookahead_replace() {
+        let title = "Show.S02.E01.2021.ADWeb";
+        let words = vec![r"Show.S02(?=.*ADWeb) => Show.S01".to_string()];
+
+        let (prepared, applied) = prepare_words(title, &words);
+
+        assert_eq!(prepared, "Show.S01.E01.2021.ADWeb");
+        assert_eq!(applied, words);
+    }
+
+    /// 验证替换词兼容 Python regex.sub 的反斜杠分组引用。
+    #[test]
+    fn custom_words_support_python_backslash_group_replacement() {
+        let title = "abc123def";
+        let words = vec![r"(abc)(123) => \2-\1".to_string()];
+
+        let (prepared, applied) = prepare_words(title, &words);
+
+        assert_eq!(prepared, "123-abcdef");
+        assert_eq!(applied, words);
+    }
+
+    /// 验证组合识别词在替换成功后继续按原 Python 语义执行集数偏移。
+    #[test]
+    fn custom_words_support_replace_and_episode_offset() {
+        let title = "Show.S02.001.2021.ADWeb";
+        let words = vec![
+            r"(?<=Show.S02.*)2021 => 2020".to_string(),
+            r"Show.S02 => Show.S01 && S01 <> 2020 >> EP+85".to_string(),
+        ];
+
+        let (prepared, applied) = prepare_words(title, &words);
+
+        assert_eq!(prepared, "Show.S01.0086.2020.ADWeb");
+        assert_eq!(applied, words);
+    }
 }
