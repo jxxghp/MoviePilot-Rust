@@ -1,15 +1,83 @@
-use crate::utils::{cached_regex, get_config_string_list};
+use crate::utils::get_config_string_list;
 use anitomy_pure::elements::Category;
 use anitomy_pure::Parser;
-use fancy_regex::{Captures as FancyCaptures, Regex as FancyRegex};
+use fancy_regex::{
+    Captures, Match, Regex as FancyRegex, RegexBuilder as FancyRegexBuilder, Replacer,
+};
 use golia_pinyin::{is_valid_syllable, segment};
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use regex::{Captures, Regex, RegexBuilder};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+struct Regex {
+    inner: FancyRegex,
+}
+
+struct RegexBuilder {
+    inner: FancyRegexBuilder,
+}
+
+impl Regex {
+    /// 编译兼容 Python regex 语义的正则表达式。
+    fn new(pattern: &str) -> fancy_regex::Result<Self> {
+        FancyRegex::new(pattern).map(|inner| Self { inner })
+    }
+
+    /// 判断文本是否匹配，运行时回溯错误按未匹配处理。
+    fn is_match(&self, text: &str) -> bool {
+        self.inner.is_match(text).unwrap_or(false)
+    }
+
+    /// 返回第一个捕获结果，运行时回溯错误按未匹配处理。
+    fn captures<'t>(&self, text: &'t str) -> Option<Captures<'t>> {
+        self.inner.captures(text).ok().flatten()
+    }
+
+    /// 遍历所有捕获结果，跳过运行时回溯错误以保持旧解析路径不中断。
+    fn captures_iter<'a>(&'a self, text: &'a str) -> impl Iterator<Item = Captures<'a>> + 'a {
+        self.inner.captures_iter(text).filter_map(Result::ok)
+    }
+
+    /// 返回第一个匹配片段，运行时回溯错误按未匹配处理。
+    fn find<'t>(&self, text: &'t str) -> Option<Match<'t>> {
+        self.inner.find(text).ok().flatten()
+    }
+
+    /// 替换所有匹配片段，复用 fancy_regex 的替换语法和缓存。
+    fn replace_all<'t, R: Replacer>(&self, text: &'t str, replacement: R) -> Cow<'t, str> {
+        self.inner.replace_all(text, replacement)
+    }
+
+    /// 按正则拆分文本，跳过运行时回溯错误产生的异常项。
+    fn split<'a>(&'a self, text: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.inner.split(text).filter_map(Result::ok)
+    }
+}
+
+impl RegexBuilder {
+    /// 创建兼容 Python regex 语义的正则构造器。
+    fn new(pattern: &str) -> Self {
+        Self {
+            inner: FancyRegexBuilder::new(pattern),
+        }
+    }
+
+    /// 设置是否忽略大小写。
+    fn case_insensitive(&mut self, yes: bool) -> &mut Self {
+        self.inner.case_insensitive(yes);
+        self
+    }
+
+    /// 构造可缓存复用的正则对象。
+    fn build(&self) -> fancy_regex::Result<Regex> {
+        self.inner.build().map(|inner| Regex { inner })
+    }
+}
 
 static ANIME_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"【[+0-9XVPI-]+】\s*【")
@@ -37,14 +105,17 @@ static ANIME_SQUARE_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
         .build()
         .unwrap()
 });
-static BRACED_METAINFO_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\{\[([^\]]+)]}").unwrap());
-static BRACED_TMDBID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"tmdbid=(\d+)").unwrap());
-static BRACED_DOUBANID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"doubanid=(\d+)").unwrap());
-static BRACED_TYPE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"type=(\w+)").unwrap());
-static BRACED_BEGIN_SEASON_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"s=(\d+)").unwrap());
-static BRACED_END_SEASON_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"s=\d+-(\d+)").unwrap());
-static BRACED_BEGIN_EPISODE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"e=(\d+)").unwrap());
-static BRACED_END_EPISODE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"e=\d+-(\d+)").unwrap());
+static BRACED_METAINFO_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<={\[)([\W\w]+)(?=]})").unwrap());
+static BRACED_TMDBID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=tmdbid=)(\d+)").unwrap());
+static BRACED_DOUBANID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=doubanid=)(\d+)").unwrap());
+static BRACED_TYPE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=type=)(\w+)").unwrap());
+static BRACED_EPISODE_GROUP_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:^|;)g=([0-9a-fA-F]+)(?=;|$)").unwrap());
+static BRACED_BEGIN_SEASON_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=s=)(\d+)").unwrap());
+static BRACED_END_SEASON_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=s=\d+-)(\d+)").unwrap());
+static BRACED_BEGIN_EPISODE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=e=)(\d+)").unwrap());
+static BRACED_END_EPISODE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?<=e=\d+-)(\d+)").unwrap());
 static EMBY_TMDB_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
         Regex::new(r"\[tmdbid[=\-](\d+)\]").unwrap(),
@@ -71,7 +142,7 @@ static BRACKET_RESOURCE_RE: Lazy<Regex> = Lazy::new(|| {
 });
 static YEAR_RANGE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"([\s.]+)(\d{4})-(\d{4})").unwrap());
 static FILE_SIZE_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"[0-9.]+\s*[MGT]i?B")
+    RegexBuilder::new(r"[0-9.]+\s*[MGT]i?B(?![A-Z]+)")
         .case_insensitive(true)
         .build()
         .unwrap()
@@ -117,8 +188,9 @@ static PART_PATTERN: Lazy<Regex> = Lazy::new(|| {
     .build()
     .unwrap()
 });
-static ROMAN_NUMERALS_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$").unwrap());
+static ROMAN_NUMERALS_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$").unwrap()
+});
 static SOURCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"(^BLURAY$|^HDTV$|^UHDTV$|^HDDVD$|^WEBRIP$|^DVDRIP$|^BDRIP$|^BLU$|^WEB$|^BD$|^HDRip$|^REMUX$|^UHD$)")
         .case_insensitive(true)
@@ -135,7 +207,7 @@ static EFFECT_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 static RESOURCES_TYPE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(
-        r"(^BLURAY$|^HDTV$|^UHDTV$|^HDDVD$|^WEBRIP$|^DVDRIP$|^BDRIP$|^BLU$|^WEB$|^BD$|^HDRip$|^REMUX$|^UHD$)|(^SDR$|^HDR\d*$|^DOLBY$|^DOVI$|^DV$|^3D$|^REPACK$|^HLG$|^HDR10(\+|Plus)$|^EDR$|^HQ$)",
+        r"(^BLURAY$|^HDTV$|^UHDTV$|^HDDVD$|^WEBRIP$|^DVDRIP$|^BDRIP$|^BLU$|^WEB$|^BD$|^HDRip$|^REMUX$|^UHD$)|(^SDR$|^HDR\d*$|^DOLBY$|^DOVI$|^DV$|^3D$|^REPACK$|^HLG$|^HDR10(\+|Plus)$|^HDR10P$|^VIVID$|^EDR$|^HQ$)",
     )
     .case_insensitive(true)
     .build()
@@ -186,13 +258,13 @@ static AUDIO_ENCODE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 static FPS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"(\d{2,3})FPS")
+    RegexBuilder::new(r"(\d{2,3})(?=FPS)")
         .case_insensitive(true)
         .build()
         .unwrap()
 });
 static VIDEO_BIT_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"(^|[^A-Za-z0-9])(?P<bit>8|10|12|16)[\s._-]*bits?([^A-Za-z0-9]|$)")
+    RegexBuilder::new(r"(?<![A-Za-z0-9])(?P<bit>8|10|12|16)[\s._-]*bits?(?![A-Za-z0-9])")
         .case_insensitive(true)
         .build()
         .unwrap()
@@ -210,7 +282,7 @@ static SUBTITLE_HAS_SEASON_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 static SUBTITLE_SEASON_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"[第\s]+([0-9一二三四五六七八九十S\-]+)\s*季")
+    RegexBuilder::new(r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十S\-]+)\s*季(?!\s*[全共])")
         .case_insensitive(true)
         .build()
         .unwrap()
@@ -222,10 +294,12 @@ static SUBTITLE_SEASON_ALL_RE: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 static SUBTITLE_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"[第\s]+([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕]")
-        .case_insensitive(true)
-        .build()
-        .unwrap()
+    RegexBuilder::new(
+        r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕](?!\s*[全共])",
+    )
+    .case_insensitive(true)
+    .build()
+    .unwrap()
 });
 static SUBTITLE_EPISODE_BETWEEN_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"[第]*\s*([0-9一二三四五六七八九十百零]+)\s*[集话話期幕]?\s*-\s*第*\s*([0-9一二三四五六七八九十百零]+)\s*[集话話期幕]")
@@ -313,15 +387,11 @@ static KEYWORD_META_SUFFIX_RE: Lazy<Regex> = Lazy::new(|| {
 static EPISODE_VERSION_SUFFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"v\d+$").unwrap());
 static TOKEN_SPLIT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\s+|\(|\)|\[|]|-|【|】|/|～|;|&|\||#|_|「|」|~").unwrap());
-static RELEASE_GROUP_RE_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-static CUSTOMIZATION_RE_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
 static STREAMING_PLATFORM_CACHE: Lazy<Mutex<HashMap<usize, Arc<HashMap<String, String>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static PARSE_OPTIONS_CACHE: Lazy<Mutex<HashMap<usize, Arc<ParseOptions>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-static CUSTOM_WORD_RE_CACHE: Lazy<Mutex<HashMap<String, FancyRegex>>> =
+static CUSTOM_WORD_RE_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 const MEDIA_TYPE_MOVIE: &str = "电影";
@@ -382,8 +452,8 @@ struct ExplicitMetaInfo {
 struct ParseOptions {
     custom_words: Vec<String>,
     media_exts: HashSet<String>,
-    release_groups: String,
-    customization_patterns: Vec<String>,
+    release_group_regex: Option<Regex>,
+    customization_regex: Option<Regex>,
     streaming_platforms: Arc<HashMap<String, String>>,
 }
 
@@ -471,8 +541,8 @@ impl ParseOptions {
             return Ok(Arc::new(Self {
                 custom_words: Vec::new(),
                 media_exts: HashSet::new(),
-                release_groups: String::new(),
-                customization_patterns: Vec::new(),
+                release_group_regex: None,
+                customization_regex: None,
                 streaming_platforms: Arc::new(HashMap::new()),
             }));
         };
@@ -482,20 +552,22 @@ impl ParseOptions {
                 return Ok(cached.clone());
             }
         }
+        let release_groups = options
+            .get_item("release_groups")?
+            .filter(|value| !value.is_none())
+            .map(|value| value.extract::<String>())
+            .transpose()?
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
+        let customization_patterns = get_config_string_list(options, "customization")?;
         let parsed = Arc::new(Self {
             custom_words: get_config_string_list(options, "custom_words")?,
             media_exts: get_config_string_list(options, "media_exts")?
                 .into_iter()
                 .map(|item| item.to_lowercase())
                 .collect(),
-            release_groups: options
-                .get_item("release_groups")?
-                .filter(|value| !value.is_none())
-                .map(|value| value.extract::<String>())
-                .transpose()?
-                .filter(|value| !value.is_empty())
-                .unwrap_or_default(),
-            customization_patterns: get_config_string_list(options, "customization")?,
+            release_group_regex: build_release_group_regex(&release_groups),
+            customization_regex: build_customization_regex(&customization_patterns),
             streaming_platforms: get_streaming_platforms(options)?,
         });
         if let Ok(mut guard) = PARSE_OPTIONS_CACHE.lock() {
@@ -571,8 +643,8 @@ fn build_meta_info(
                 &ParseOptions {
                     custom_words: Vec::new(),
                     media_exts: options.media_exts.clone(),
-                    release_groups: options.release_groups.clone(),
-                    customization_patterns: options.customization_patterns.clone(),
+                    release_group_regex: options.release_group_regex.clone(),
+                    customization_regex: options.customization_regex.clone(),
                     streaming_platforms: options.streaming_platforms.clone(),
                 },
                 false,
@@ -668,7 +740,9 @@ fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             .captures(&result)
             .and_then(|cap| cap.get(1));
         let mtype = BRACED_TYPE_RE.captures(&result).and_then(|cap| cap.get(1));
-        let episode_group = find_explicit_episode_group(&result);
+        let episode_group = BRACED_EPISODE_GROUP_RE
+            .captures(&result)
+            .and_then(|cap| cap.get(1).map(|item| item.as_str().to_string()));
         let begin_season = BRACED_BEGIN_SEASON_RE
             .captures(&result)
             .and_then(|cap| cap.get(1));
@@ -749,23 +823,6 @@ fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
     );
     info.title = parsed_title;
     info
-}
-
-/// 从显式标签参数中提取 g= 剧集组，避免普通标题额外走正则匹配。
-fn find_explicit_episode_group(value: &str) -> Option<String> {
-    if !value.starts_with("g=") && !value.contains(";g=") {
-        return None;
-    }
-
-    value.split(';').find_map(|part| {
-        part.strip_prefix("g=").and_then(|group_id| {
-            if !group_id.is_empty() && group_id.chars().all(|item| item.is_ascii_hexdigit()) {
-                Some(group_id.to_string())
-            } else {
-                None
-            }
-        })
-    })
 }
 
 /// 计算显式季集范围总数，兼容倒序输入。
@@ -919,7 +976,7 @@ fn replace_regex(title: &str, replaced: &str, replacement: &str) -> (String, boo
     let Some(regex) = cached_fancy_regex(replaced) else {
         return (title.to_string(), false);
     };
-    let Ok(result) = regex.try_replacen(title, 0, |cap: &FancyCaptures<'_>| {
+    let Ok(result) = regex.inner.try_replacen(title, 0, |cap: &Captures<'_>| {
         expand_python_replacement(cap, replacement)
     }) else {
         return (title.to_string(), false);
@@ -932,7 +989,7 @@ fn replace_regex(title: &str, replaced: &str, replacement: &str) -> (String, boo
 fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String, bool) {
     if !back.is_empty()
         && cached_fancy_regex(back)
-            .and_then(|regex| regex.is_match(title).ok())
+            .map(|regex| regex.is_match(title))
             .map(|matched| !matched)
             .unwrap_or(true)
     {
@@ -940,7 +997,7 @@ fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String
     }
     if !front.is_empty()
         && cached_fancy_regex(front)
-            .and_then(|regex| regex.is_match(title).ok())
+            .map(|regex| regex.is_match(title))
             .map(|matched| !matched)
             .unwrap_or(true)
     {
@@ -953,22 +1010,18 @@ fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String
     let Some(regex) = cached_fancy_regex(&pattern) else {
         return (title.to_string(), false);
     };
-    let mut replacements = BTreeMap::new();
-    let mut offset_order_flag = false;
-    for cap in regex.captures_iter(title) {
-        let Ok(cap) = cap else {
-            return (title.to_string(), false);
-        };
+    let mut replaced = false;
+    let Ok(result) = regex.inner.try_replacen(title, 0, |cap: &Captures<'_>| {
         let Some(value) = cap.get(0).map(|item| item.as_str()) else {
-            continue;
+            return String::new();
         };
         let Some(number) = cn_number_to_i64(value) else {
-            continue;
+            return value.to_string();
         };
         let Some(offset_value) = eval_episode_offset(offset, number) else {
-            continue;
+            return value.to_string();
         };
-        offset_order_flag = number > offset_value;
+        replaced = true;
         let replacement = if value.chars().any(is_chinese_char) {
             i64_to_cn_number(offset_value)
         } else if let Some(zeros) = LEADING_ZERO_RE.find(value) {
@@ -976,38 +1029,25 @@ fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String
         } else {
             offset_value.to_string()
         };
-        replacements.insert(value.to_string(), replacement);
-    }
-    if replacements.is_empty() {
+        replacement
+    }) else {
         return (title.to_string(), false);
-    }
-    let mut items = replacements.into_iter().collect::<Vec<_>>();
-    if offset_order_flag {
-        items.sort_by(|left, right| left.1.cmp(&right.1));
+    };
+    if replaced {
+        (result.into_owned(), true)
     } else {
-        items.sort_by(|left, right| right.1.cmp(&left.1));
+        (title.to_string(), false)
     }
-    let mut result = title.to_string();
-    for (from, to) in items {
-        let pattern = format!(r"(?<={}.*?){}(?=.*?{})", front, regex::escape(&from), back);
-        if let Some(regex) = cached_fancy_regex(&pattern) {
-            match regex.try_replacen(&result, 0, to.as_str()) {
-                Ok(replaced) => result = replaced.into_owned(),
-                Err(_) => return (title.to_string(), false),
-            }
-        }
-    }
-    (result, true)
 }
 
 /// 缓存自定义识别词正则，支持用户规则里的 look-around 与反向引用语法。
-fn cached_fancy_regex(pattern: &str) -> Option<FancyRegex> {
+fn cached_fancy_regex(pattern: &str) -> Option<Regex> {
     if let Ok(guard) = CUSTOM_WORD_RE_CACHE.lock() {
         if let Some(regex) = guard.get(pattern) {
             return Some(regex.clone());
         }
     }
-    let regex = FancyRegex::new(pattern).ok()?;
+    let regex = Regex::new(pattern).ok()?;
     if let Ok(mut guard) = CUSTOM_WORD_RE_CACHE.lock() {
         guard.insert(pattern.to_string(), regex.clone());
     }
@@ -1015,7 +1055,7 @@ fn cached_fancy_regex(pattern: &str) -> Option<FancyRegex> {
 }
 
 /// 按 Python regex.sub 的反斜杠分组语义展开替换词。
-fn expand_python_replacement(cap: &FancyCaptures<'_>, replacement: &str) -> String {
+fn expand_python_replacement(cap: &Captures<'_>, replacement: &str) -> String {
     let mut result = String::new();
     let mut chars = replacement.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -1215,8 +1255,8 @@ fn parse_video(
             }
         }
     }
-    meta.resource_team = match_release_group(&original_title, &options.release_groups);
-    meta.customization = match_customization(&original_title, &options.customization_patterns);
+    meta.resource_team = match_release_group(&original_title, options.release_group_regex.as_ref());
+    meta.customization = match_customization(&original_title, options.customization_regex.as_ref());
     if meta.video_bit.is_none() {
         meta.video_bit = extract_video_bit(meta.video_encode.as_deref().unwrap_or_default());
     }
@@ -1244,7 +1284,8 @@ fn parse_anime(
     let origin_release_group = parsed_origin
         .as_ref()
         .and_then(|elements| first_element(elements, Category::ReleaseGroup));
-    let matched_release_group = match_release_group(&original_title, &options.release_groups);
+    let matched_release_group =
+        match_release_group(&original_title, options.release_group_regex.as_ref());
 
     if let Some(elements) = parsed.as_ref() {
         let mut name = first_element(elements, Category::AnimeTitle);
@@ -1379,7 +1420,8 @@ fn parse_anime(
         meta.resource_pix =
             first_element(elements, Category::VideoResolution).and_then(normalize_resource_pix);
         meta.resource_team = matched_release_group.or(origin_release_group);
-        meta.customization = match_customization(&original_title, &options.customization_patterns);
+        meta.customization =
+            match_customization(&original_title, options.customization_regex.as_ref());
         meta.video_encode = first_element(elements, Category::VideoTerm);
         if meta
             .video_encode
@@ -1778,8 +1820,8 @@ fn init_resource_pix(meta: &mut MetaResult, state: &mut VideoState, token: &str)
 
 /// 识别季。
 fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) {
-    let captures = SEASON_PATTERN.captures_iter(token).collect::<Vec<_>>();
-    if !captures.is_empty() {
+    let mut captures = SEASON_PATTERN.captures_iter(token).peekable();
+    if captures.peek().is_some() {
         state.last_token_type = "season".to_string();
         meta.media_type = MEDIA_TYPE_TV.to_string();
         state.stop_name_flag = true;
@@ -1823,8 +1865,8 @@ fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfil
 
 /// 识别集。
 fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) {
-    let captures = EPISODE_PATTERN.captures_iter(token).collect::<Vec<_>>();
-    if !captures.is_empty() {
+    let mut captures = EPISODE_PATTERN.captures_iter(token).peekable();
+    if captures.peek().is_some() {
         state.last_token_type = "episode".to_string();
         state.continue_flag = false;
         state.stop_name_flag = true;
@@ -2232,11 +2274,7 @@ fn init_subtitle(meta: &mut MetaResult, title_text: &str) {
             }
             return;
         }
-        if let Some(cap) = SUBTITLE_SEASON_RE.captures_iter(&title_text).find(|cap| {
-            cap.get(0)
-                .map(|item| subtitle_match_allowed(&title_text, item.start(), item.end()))
-                .unwrap_or(false)
-        }) {
+        if let Some(cap) = SUBTITLE_SEASON_RE.captures(&title_text) {
             if let Some(seasons) = cap.get(1).map(|item| {
                 item.as_str()
                     .to_uppercase()
@@ -2293,11 +2331,7 @@ fn init_subtitle(meta: &mut MetaResult, title_text: &str) {
                 return;
             }
         }
-        if let Some(cap) = SUBTITLE_EPISODE_RE.captures_iter(&title_text).find(|cap| {
-            cap.get(0)
-                .map(|item| subtitle_match_allowed(&title_text, item.start(), item.end()))
-                .unwrap_or(false)
-        }) {
+        if let Some(cap) = SUBTITLE_EPISODE_RE.captures(&title_text) {
             if let Some(episodes) = cap.get(1).map(|item| {
                 item.as_str()
                     .to_uppercase()
@@ -2826,7 +2860,7 @@ fn range_from_values(values: &[String]) -> Option<(i64, i64)> {
 
 /// 解析可能带 v2 后缀的集数。
 fn parse_episode_like_number(value: &str) -> Option<i64> {
-    let value = EPISODE_VERSION_SUFFIX_RE.replace(value, "").to_string();
+    let value = EPISODE_VERSION_SUFFIX_RE.replace_all(value, "").to_string();
     value.parse::<i64>().ok()
 }
 
@@ -2990,24 +3024,7 @@ fn split_suffix(value: &str) -> Option<(String, String)> {
 
 /// 删除文件大小片段，并保留 Python 负向前瞻避免吞掉后续大写字母的语义。
 fn strip_file_size(value: &str) -> String {
-    FILE_SIZE_RE
-        .replace_all(value, |cap: &Captures<'_>| {
-            let end = cap.get(0).map(|item| item.end()).unwrap_or(0);
-            let next_is_upper = value[end..]
-                .chars()
-                .next()
-                .map(|ch| ch.is_ascii_uppercase())
-                .unwrap_or(false);
-            if next_is_upper {
-                cap.get(0)
-                    .map(|item| item.as_str())
-                    .unwrap_or_default()
-                    .to_string()
-            } else {
-                String::new()
-            }
-        })
-        .to_string()
+    FILE_SIZE_RE.replace_all(value, "").to_string()
 }
 
 /// 提取视频位深。
@@ -3016,17 +3033,6 @@ fn extract_video_bit(value: &str) -> Option<String> {
         .captures(value)
         .and_then(|cap| cap.name("bit"))
         .map(|item| format!("{}bit", item.as_str()))
-}
-
-/// 过滤副标题季集匹配，模拟原 Python 负向前后文约束。
-fn subtitle_match_allowed(text: &str, start: usize, end: usize) -> bool {
-    let before = &text[..start];
-    let after = &text[end..];
-    let before_trimmed = before.trim_end();
-    let after_trimmed = after.trim_start();
-    let before_blocked = before_trimmed.ends_with('全') || before_trimmed.ends_with('共');
-    let after_blocked = after_trimmed.starts_with('全') || after_trimmed.starts_with('共');
-    !before_blocked && !after_blocked
 }
 
 /// 判断字符串是否含中文。
@@ -3134,12 +3140,11 @@ fn i64_to_cn_number(value: i64) -> String {
 }
 
 /// 匹配发布组或字幕组。
-fn match_release_group(title: &str, groups: &str) -> Option<String> {
-    if title.is_empty() || groups.is_empty() {
+fn match_release_group(title: &str, regex: Option<&Regex>) -> Option<String> {
+    if title.is_empty() {
         return None;
     }
-    let pattern = format!(r"(?i)(^|[-@\[￡【&])((?:{}))($|[@.\s\]\[】&])", groups);
-    let regex = cached_regex(&RELEASE_GROUP_RE_CACHE, &pattern)?;
+    let regex = regex?;
     let title = format!("{title} ");
     let mut unique = Vec::new();
     for cap in regex.captures_iter(&title) {
@@ -3153,9 +3158,18 @@ fn match_release_group(title: &str, groups: &str) -> Option<String> {
     (!unique.is_empty()).then(|| unique.join("@"))
 }
 
-/// 匹配自定义占位符。
-fn match_customization(title: &str, patterns: &[String]) -> Option<String> {
-    if title.is_empty() || patterns.is_empty() {
+/// 编译发布组匹配正则，随 ParseOptions 缓存复用。
+fn build_release_group_regex(groups: &str) -> Option<Regex> {
+    if groups.is_empty() {
+        return None;
+    }
+    let pattern = format!(r"(?i)(^|[-@\[￡【&])((?:{}))($|[@.\s\]\[】&])", groups);
+    Regex::new(&pattern).ok()
+}
+
+/// 编译自定义占位符匹配正则，随 ParseOptions 缓存复用。
+fn build_customization_regex(patterns: &[String]) -> Option<Regex> {
+    if patterns.is_empty() {
         return None;
     }
     let pattern = patterns
@@ -3163,7 +3177,15 @@ fn match_customization(title: &str, patterns: &[String]) -> Option<String> {
         .map(|item| format!("({item})"))
         .collect::<Vec<_>>()
         .join("|");
-    let regex = cached_regex(&CUSTOMIZATION_RE_CACHE, &pattern)?;
+    Regex::new(&pattern).ok()
+}
+
+/// 匹配自定义占位符。
+fn match_customization(title: &str, regex: Option<&Regex>) -> Option<String> {
+    if title.is_empty() {
+        return None;
+    }
+    let regex = regex?;
     let mut unique: BTreeMap<usize, String> = BTreeMap::new();
     for cap in regex.captures_iter(title) {
         for index in 1..cap.len() {
@@ -3217,7 +3239,10 @@ fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<PyObject> {
 
 #[cfg(test)]
 mod tests {
-    use super::prepare_words;
+    use super::{
+        extract_video_bit, find_explicit_metainfo, init_subtitle, prepare_words, strip_file_size,
+        MetaResult, ROMAN_NUMERALS_PATTERN,
+    };
 
     /// 验证自定义识别词支持 issue #4 中的变长后视年份替换和前视季替换。
     #[test]
@@ -3274,5 +3299,55 @@ mod tests {
 
         assert_eq!(prepared, "Show.S01.0086.2020.ADWeb");
         assert_eq!(applied, words);
+    }
+
+    /// 验证显式媒体标签按 Python regex 的 look-around 语义提取。
+    #[test]
+    fn explicit_metainfo_uses_python_regex_lookaround_semantics() {
+        let parsed = find_explicit_metainfo(
+            "物语系列 {[tmdbid=46195;doubanid=12345;type=tv;g=5f8a;s=3-1;e=12-10]}",
+        );
+
+        assert_eq!(parsed.title, "物语系列 ");
+        assert_eq!(parsed.tmdbid.as_deref(), Some("46195"));
+        assert_eq!(parsed.doubanid.as_deref(), Some("12345"));
+        assert_eq!(parsed.episode_group.as_deref(), Some("5f8a"));
+        assert_eq!(parsed.begin_season, Some(1));
+        assert_eq!(parsed.end_season, Some(3));
+        assert_eq!(parsed.total_season, Some(3));
+        assert_eq!(parsed.begin_episode, Some(10));
+        assert_eq!(parsed.end_episode, Some(12));
+        assert_eq!(parsed.total_episode, Some(3));
+    }
+
+    /// 验证大小清洗、位深、帧率和罗马数字规则支持 Python regex 的前后视。
+    #[test]
+    fn media_regexes_use_python_regex_lookaround_semantics() {
+        assert_eq!(strip_file_size("Show 1.5GB Title"), "Show  Title");
+        assert_eq!(strip_file_size("Show 1.5GBTitle"), "Show 1.5GBTitle");
+        assert_eq!(extract_video_bit("HEVC-10bit"), Some("10bit".to_string()));
+        assert_eq!(extract_video_bit("abc10bit"), None);
+        assert!(ROMAN_NUMERALS_PATTERN.is_match("IV"));
+        assert!(!ROMAN_NUMERALS_PATTERN.is_match(""));
+    }
+
+    /// 验证副标题季集规则直接使用 Python regex 负向前后视。
+    #[test]
+    fn subtitle_regexes_use_python_negative_context() {
+        let mut meta = MetaResult::default();
+        init_subtitle(&mut meta, "全 3 季");
+        assert_eq!(meta.begin_season, Some(1));
+        assert_eq!(meta.end_season, Some(3));
+        assert_eq!(meta.total_season, 3);
+
+        let mut blocked = MetaResult::default();
+        init_subtitle(&mut blocked, "第 3 季 全");
+        assert_eq!(blocked.begin_season, None);
+        assert_eq!(blocked.total_season, 0);
+
+        let mut episode = MetaResult::default();
+        init_subtitle(&mut episode, "第 02 集");
+        assert_eq!(episode.begin_episode, Some(2));
+        assert_eq!(episode.total_episode, 1);
     }
 }

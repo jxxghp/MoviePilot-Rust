@@ -1,8 +1,5 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
-use regex::Regex;
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 /// 从 Python 字典读取可选字符串。
 pub(crate) fn get_optional_string(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<String>> {
@@ -198,18 +195,4 @@ pub(crate) fn object_optional_i64(obj: &Bound<'_, PyAny>, attr: &str) -> PyResul
 pub(crate) fn object_optional_f64(obj: &Bound<'_, PyAny>, attr: &str) -> PyResult<Option<f64>> {
     let value = obj.getattr(attr)?;
     py_any_to_f64(&value)
-}
-
-/// 按正则文本缓存动态正则，避免热路径重复编译。
-pub(crate) fn cached_regex(cache: &Mutex<HashMap<String, Regex>>, pattern: &str) -> Option<Regex> {
-    if let Ok(guard) = cache.lock() {
-        if let Some(regex) = guard.get(pattern) {
-            return Some(regex.clone());
-        }
-    }
-    let regex = Regex::new(pattern).ok()?;
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(pattern.to_string(), regex.clone());
-    }
-    Some(regex)
 }

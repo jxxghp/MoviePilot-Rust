@@ -1,6 +1,6 @@
 [package]
 name = "moviepilot-rust"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Rust acceleration helpers for MoviePilot"
 license = "GPL-3.0-or-later"
