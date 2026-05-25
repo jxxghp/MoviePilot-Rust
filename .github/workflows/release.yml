@@ -1,95 +1,125 @@
 name: Build and Publish
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build ${{ matrix.os }} ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.conf.os }}-py${{ matrix.python-version }}-${{ matrix.conf.target }}
+    runs-on: ${{ matrix.conf.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64
-          - os: ubuntu-latest
-            target: aarch64
-          - os: macos-latest
-            target: x86_64
-          - os: macos-latest
-            target: aarch64
-          - os: windows-latest
-            target: x64
-
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        conf:
+          - {
+              os: ubuntu-latest,
+              target: x86_64,
+              target-triple: x86_64-unknown-linux-gnu,
+              manylinux: 2014,
+            }
+          - {
+              os: ubuntu-latest,
+              target: aarch64,
+              target-triple: aarch64-unknown-linux-gnu,
+              manylinux: 2014,
+            }
+          - {
+              os: ubuntu-latest,
+              target: x86_64,
+              target-triple: x86_64-unknown-linux-musl,
+              manylinux: musllinux_1_1,
+            }
+          - {
+              os: ubuntu-latest,
+              target: aarch64,
+              target-triple: aarch64-unknown-linux-musl,
+              manylinux: musllinux_1_1,
+            }
+          - {
+              os: macos-14,
+              target: x86_64,
+              target-triple: x86_64-apple-darwin,
+              manylinux: "",
+            }
+          - {
+              os: macos-14,
+              target: aarch64,
+              target-triple: aarch64-apple-darwin,
+              manylinux: "",
+            }
+          - {
+              os: windows-latest,
+              target: x86_64,
+              target-triple: x86_64-pc-windows-msvc,
+              manylinux: "",
+            }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Build wheels
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.conf.target-triple }}
+
+      - name: Setup QEMU (Linux cross)
+        if: matrix.conf.os == 'ubuntu-latest' && matrix.conf.target != 'x86_64'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Build wheel (Linux)
+        if: matrix.conf.manylinux != ''
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
-          args: --release --out dist
-          sccache: "true"
-          manylinux: auto
+          target: ${{ matrix.conf.target }}
+          manylinux: ${{ matrix.conf.manylinux }}
+          docker-options: ${{ matrix.python-version == '3.14' && '-e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1' || '' }}
+          args: -i python${{ matrix.python-version }} --release --out dist --compatibility pypi
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.os }}-${{ matrix.target }}
-          path: dist/*.whl
-
-  sdist:
-    name: Build sdist
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Build sdist
+      - name: Build wheel (macOS)
+        if: matrix.conf.manylinux == '' && runner.os != 'Windows'
         uses: PyO3/maturin-action@v1
         with:
-          command: sdist
-          args: --out dist
+          target: ${{ matrix.conf.target }}
+          args: -i python${{ matrix.python-version }} --release --out dist --compatibility pypi
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: ${{ matrix.python-version == '3.14' && '1' || '' }}
 
-      - uses: actions/upload-artifact@v4
+      - name: Build wheel (Windows)
+        if: runner.os == 'Windows'
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: ${{ matrix.python-version == '3.14' && '1' || '' }}
+        run: |
+          pip install maturin
+          maturin build -i python --release -o dist --target ${{ matrix.conf.target-triple }} --compatibility pypi
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v7
         with:
-          name: sdist
-          path: dist/*.tar.gz
+          name: wheel-${{ matrix.conf.os }}-py${{ matrix.python-version }}-${{ matrix.conf.target }}-${{ matrix.conf.manylinux || 'host' }}
+          path: dist/
 
   publish:
     name: Publish to PyPI
-    needs:
-      - build
-      - sdist
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    environment:
-      name: pypi
-      url: https://pypi.org/p/moviepilot-rust
+    needs: build
+    environment: pypi
     permissions:
       id-token: write
-
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-
-      - name: Publish package
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist/
-          skip-existing: true
+          packages-dir: dist
