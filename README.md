@@ -36,8 +36,8 @@ scripts/build_wheels.sh
 产物会输出到 `dist/`，例如：
 
 ```text
-dist/moviepilot_rust-0.1.0-cp311-abi3-macosx_11_0_arm64.whl
-dist/moviepilot_rust-0.1.0.tar.gz
+dist/moviepilot_rust-0.1.2-cp311-abi3-macosx_11_0_arm64.whl
+dist/moviepilot_rust-0.1.2.tar.gz
 ```
 
 脚本默认使用本仓库 `.venv/bin/python`。
@@ -70,9 +70,11 @@ dist/moviepilot_rust-0.1.0.tar.gz
 
 ## 发布
 
-推送 `v*` tag 会触发 GitHub Actions，自动构建 Linux、macOS、Windows wheel 和 sdist，并发布到 PyPI。
+在 GitHub 上 **Publish Release** 会触发 Actions，自动构建 Linux（glibc/musl）、macOS、Windows wheel 并发布到 PyPI；发布成功后还会向 [MoviePilot](https://github.com/jxxghp/MoviePilot) 的 `v2` 分支提交 bump `requirements.in` 的 PR（需配置 `MOVIEPILOT_REPO_TOKEN`）。
 
 ```shell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.2
+git push origin v0.1.2
 ```
+
+然后在 GitHub 仓库 **Releases → Draft a new release** 中选择上述 tag 并点击 **Publish release**。仅推送 tag 不会触发构建。

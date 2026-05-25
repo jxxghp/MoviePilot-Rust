@@ -9,12 +9,11 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.conf.os }}-py${{ matrix.python-version }}-${{ matrix.conf.target }}
+    name: ${{ matrix.conf.os }}-${{ matrix.conf.target }}-${{ matrix.conf.manylinux || 'host' }}
     runs-on: ${{ matrix.conf.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
         conf:
           - {
               os: ubuntu-latest,
@@ -64,7 +63,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -78,25 +77,27 @@ jobs:
       - name: Build wheel (Linux)
         if: matrix.conf.manylinux != ''
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         with:
           target: ${{ matrix.conf.target }}
           manylinux: ${{ matrix.conf.manylinux }}
-          docker-options: ${{ matrix.python-version == '3.14' && '-e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1' || '' }}
-          args: -i python${{ matrix.python-version }} --release --out dist --compatibility pypi
+          docker-options: -e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+          args: -i python3.11 --release --out dist --compatibility pypi
 
       - name: Build wheel (macOS)
         if: matrix.conf.manylinux == '' && runner.os != 'Windows'
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.conf.target }}
-          args: -i python${{ matrix.python-version }} --release --out dist --compatibility pypi
+          args: -i python3.11 --release --out dist --compatibility pypi
         env:
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: ${{ matrix.python-version == '3.14' && '1' || '' }}
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Build wheel (Windows)
         if: runner.os == 'Windows'
         env:
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: ${{ matrix.python-version == '3.14' && '1' || '' }}
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         run: |
           pip install maturin
           maturin build -i python --release -o dist --target ${{ matrix.conf.target-triple }} --compatibility pypi
@@ -104,8 +105,8 @@ jobs:
       - name: Upload wheel
         uses: actions/upload-artifact@v7
         with:
-          name: wheel-${{ matrix.conf.os }}-py${{ matrix.python-version }}-${{ matrix.conf.target }}-${{ matrix.conf.manylinux || 'host' }}
-          path: dist/
+          name: wheel-${{ matrix.conf.os }}-${{ matrix.conf.target }}-${{ matrix.conf.manylinux || 'host' }}
+          path: dist/*.whl
 
   publish:
     name: Publish to PyPI
@@ -119,8 +120,68 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Validate wheels
+        run: |
+          shopt -s globstar nullglob
+          wheels=(dist/**/*.whl dist/*.whl)
+          if (( ${#wheels[@]} == 0 )); then
+            echo "No wheels found in dist/" >&2
+            exit 1
+          fi
+          python3 -m zipfile -t "${wheels[@]}"
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           skip-existing: true
+
+  bump-moviepilot-requirements:
+    name: Bump MoviePilot requirements.in
+    runs-on: ubuntu-latest
+    needs: publish
+    steps:
+      - name: Resolve version
+        id: version
+        run: |
+          version="${{ github.event.release.tag_name }}"
+          version="${version#v}"
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          repository: jxxghp/MoviePilot
+          ref: v2
+          token: ${{ secrets.MOVIEPILOT_REPO_TOKEN }}
+
+      - name: Update moviepilot-rust pin
+        id: bump
+        run: |
+          target="moviepilot-rust~=${{ steps.version.outputs.value }}"
+          if grep -q "^${target}$" requirements.in; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already pinned to ${target}"
+            exit 0
+          fi
+          if ! grep -q '^moviepilot-rust~=' requirements.in; then
+            echo "moviepilot-rust entry not found in requirements.in" >&2
+            exit 1
+          fi
+          sed -i "s/^moviepilot-rust~=.*$/${target}/" requirements.in
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          grep '^moviepilot-rust~=' requirements.in
+
+      - uses: peter-evans/create-pull-request@v7
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          token: ${{ secrets.MOVIEPILOT_REPO_TOKEN }}
+          commit-message: "chore: bump moviepilot-rust to ${{ steps.version.outputs.value }}"
+          title: "chore: bump moviepilot-rust to ${{ steps.version.outputs.value }}"
+          body: |
+            Automated bump from [${{ github.repository }}](https://github.com/${{ github.repository }}) release ${{ github.event.release.tag_name }}.
+
+            PyPI: https://pypi.org/project/moviepilot-rust/${{ steps.version.outputs.value }}/
+          branch: chore/bump-moviepilot-rust-${{ steps.version.outputs.value }}
+          base: v2
+          delete-branch: true
