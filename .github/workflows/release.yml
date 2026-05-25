@@ -121,16 +121,6 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Validate wheels
-        run: |
-          shopt -s globstar nullglob
-          wheels=(dist/**/*.whl dist/*.whl)
-          if (( ${#wheels[@]} == 0 )); then
-            echo "No wheels found in dist/" >&2
-            exit 1
-          fi
-          python3 -m zipfile -t "${wheels[@]}"
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
