@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "moviepilot-rust"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Rust acceleration helpers for MoviePilot"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "jxxghp" }]
+keywords = ["moviepilot", "rust", "pyo3"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+]
+
+[tool.maturin]
+bindings = "pyo3"
+strip = true

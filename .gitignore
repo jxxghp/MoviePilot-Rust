@@ -1,0 +1,6 @@
+/target/
+/dist/
+/*.egg-info/
+/.venv/
+__pycache__/
+*.py[cod]
