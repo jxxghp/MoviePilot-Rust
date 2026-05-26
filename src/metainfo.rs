@@ -227,7 +227,7 @@ static NAME_MOVIE_WORDS_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 static NAME_NOSTRING_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(
-        r"^PTS|^JADE|^AOD|^CHC|^[A-Z]{1,4}TV[\-0-9UVHDK]*|HBO$|\s+HBO|\d{1,2}th|\d{1,2}bit|NETFLIX|AMAZON|IMAX|^3D|\s+3D|^BBC\s+|\s+BBC|BBC$|DISNEY\+?|XXX|\s+DC$|[第\s共]+[0-9一二三四五六七八九十\-\s]+季|[第\s共]+[0-9一二三四五六七八九十百零\-\s]+[集话話]|连载|日剧|美剧|电视剧|动画片|动漫|欧美|西德|日韩|超高清|高清|无水印|下载|蓝光|翡翠台|梦幻天堂·龙网|★?\d*月?新番|最终季|合集|[多中国英葡法俄日韩德意西印泰台港粤双文语简繁体特效内封官译外挂]+字幕|版本|出品|台版|港版|\w+字幕组|\w+字幕社|未删减版|UNCUT$|UNRATE$|WITH EXTRAS$|RERIP$|SUBBED$|PROPER$|REPACK$|SEASON$|EPISODE$|Complete$|Extended$|Extended Version$|S\d{2}\s*-\s*S\d{2}|S\d{2}|\s+S\d{1,2}|EP?\d{2,4}\s*-\s*EP?\d{2,4}|EP?\d{2,4}|\s+EP?\d{1,4}|CD[\s.]*[1-9]|DVD[\s.]*[1-9]|DISK[\s.]*[1-9]|DISC[\s.]*[1-9]|[248]K|\d{3,4}[PIX]+|CD[\s.]*[1-9]|DVD[\s.]*[1-9]|DISK[\s.]*[1-9]|DISC[\s.]*[1-9]|\s+GB",
+        r"^PTS|^JADE|^AOD|^CHC|^[A-Z]{1,4}TV[\-0-9UVHDK]*|\d{1,2}th|\d{1,2}bit|IMAX|^3D|\s+3D|XXX|\s+DC$|[第\s共]+[0-9一二三四五六七八九十\-\s]+季|[第\s共]+[0-9一二三四五六七八九十百零\-\s]+[集话話]|连载|日剧|美剧|电视剧|动画片|动漫|欧美|西德|日韩|超高清|高清|无水印|下载|蓝光|翡翠台|梦幻天堂·龙网|★?\d*月?新番|最终季|合集|[多中国英葡法俄日韩德意西印泰台港粤双文语简繁体特效内封官译外挂]+字幕|版本|出品|台版|港版|\w+字幕组|\w+字幕社|未删减版|UNCUT$|UNRATE$|WITH EXTRAS$|RERIP$|SUBBED$|PROPER$|REPACK$|SEASON$|EPISODE$|Complete$|Extended$|Extended Version$|S\d{2}\s*-\s*S\d{2}|S\d{2}|\s+S\d{1,2}|EP?\d{2,4}\s*-\s*EP?\d{2,4}|EP?\d{2,4}|\s+EP?\d{1,4}|CD[\s.]*[1-9]|DVD[\s.]*[1-9]|DISK[\s.]*[1-9]|DISC[\s.]*[1-9]|[248]K|\d{3,4}[PIX]+|CD[\s.]*[1-9]|DVD[\s.]*[1-9]|DISK[\s.]*[1-9]|DISC[\s.]*[1-9]|\s+GB",
     )
     .case_insensitive(true)
     .build()
@@ -3240,9 +3240,11 @@ fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<PyObject> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_video_bit, find_explicit_metainfo, init_subtitle, prepare_words, strip_file_size,
-        MetaResult, ROMAN_NUMERALS_PATTERN,
+        build_meta_info, extract_video_bit, find_explicit_metainfo, init_subtitle, prepare_words,
+        strip_file_size, MetaResult, ParseOptions, ROMAN_NUMERALS_PATTERN,
     };
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
 
     /// 验证自定义识别词支持 issue #4 中的变长后视年份替换和前视季替换。
     #[test]
@@ -3349,5 +3351,26 @@ mod tests {
         init_subtitle(&mut episode, "第 02 集");
         assert_eq!(episode.begin_episode, Some(2));
         assert_eq!(episode.total_episode, 1);
+    }
+
+    /// 验证正式片名中的流媒体平台词不会被预置清理规则移除。
+    #[test]
+    fn streaming_platform_word_kept_in_movie_title() {
+        let meta = build_meta_info(
+            "Amazon Forever 2004 1080p WEB-DL",
+            None,
+            &ParseOptions {
+                custom_words: Vec::new(),
+                media_exts: HashSet::new(),
+                release_group_regex: None,
+                customization_regex: None,
+                streaming_platforms: Arc::new(HashMap::new()),
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(meta.en_name.as_deref(), Some("Amazon Forever"));
+        assert_eq!(meta.year.as_deref(), Some("2004"));
     }
 }
