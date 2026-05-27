@@ -1,0 +1,124 @@
+"""从 MoviePilot 调用方视角验证过滤规则 Rust 扩展。"""
+
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest import TestCase
+
+import moviepilot_rust
+
+from tests.metainfo.options import build_options
+
+
+def _torrent(**kwargs):
+    """构造 filter_torrents_fast 可读取属性的轻量种子对象。"""
+    defaults = {
+        "site_name": "",
+        "title": "",
+        "description": "",
+        "labels": [],
+        "size": 0,
+        "seeders": 0,
+        "downloadvolumefactor": None,
+        "pubdate": "",
+    }
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+def _media(**kwargs):
+    """构造 filter_torrents_fast 可读取属性的轻量媒体对象。"""
+    return SimpleNamespace(**kwargs)
+
+
+class FilterPublicEntryTest(TestCase):
+    """覆盖 MoviePilot 后端同步过来的过滤规则公开入口用例。"""
+
+    def test_filter_rule_parser_matches_boolean_semantics(self):
+        """同步后端布尔过滤规则解析用例。"""
+        result = moviepilot_rust.parse_filter_rule_fast("HDR & !BLU")
+
+        self.assertEqual(result, [["HDR", "and", ["not", "BLU"]]])
+
+    def test_filter_rule_parser_handles_parentheses_and_or(self):
+        """同步后端括号、与、或优先级解析用例。"""
+        result = moviepilot_rust.parse_filter_rule_fast("CNSUB & (4K | 1080P) & !BLU")
+
+        self.assertEqual(result, [[["CNSUB", "and", ["4K", "or", "1080P"]], "and", ["not", "BLU"]]])
+
+    def test_filter_torrents_keeps_priority_and_boolean_rule_semantics(self):
+        """同步后端优先级和布尔规则过滤用例。"""
+        groups = [{"name": "test", "rule_string": "HDR & !BLU > DV"}]
+        rule_set = {
+            "HDR": {"include": "HDR"},
+            "DV": {"include": "DOVI"},
+            "BLU": {"include": "BluRay"},
+        }
+        torrents = [
+            _torrent(title="Movie HDR WEB-DL"),
+            _torrent(title="Movie DOVI"),
+            _torrent(title="Movie HDR BluRay"),
+        ]
+
+        result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
+
+        self.assertEqual(result, [(0, 100), (1, 99)])
+
+    def test_filter_torrents_keeps_lazy_priority_level_parsing(self):
+        """同步后端命中高优先级后不解析低优先级坏规则的用例。"""
+        result = moviepilot_rust.filter_torrents_fast(
+            [{"name": "test", "rule_string": "KEEP > ("}],
+            [_torrent(title="Movie")],
+            {"KEEP": {"include": "Movie"}},
+        )
+
+        self.assertEqual(result, [(0, 100)])
+
+    def test_filter_torrents_keeps_sequential_rule_group_semantics(self):
+        """同步后端多个规则组按顺序逐轮过滤的用例。"""
+        groups = [
+            {"name": "first", "rule_string": "HDR"},
+            {"name": "second", "rule_string": "FREE"},
+        ]
+        rule_set = {
+            "HDR": {"include": "HDR"},
+            "FREE": {"downloadvolumefactor": 0},
+        }
+        torrents = [
+            _torrent(title="Movie HDR WEB-DL", downloadvolumefactor=0),
+            _torrent(title="Movie HDR WEB-DL", downloadvolumefactor=1),
+        ]
+
+        result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
+
+        self.assertEqual(result, [(0, 100)])
+
+    def test_filter_torrents_supports_full_rule_fields(self):
+        """同步后端完整规则字段匹配 Rust 入口的用例。"""
+        groups = [{"name": "test", "rule_string": "TMDB & LABEL & SIZE & SEED & PUB & SITE"}]
+        rule_set = {
+            "TMDB": {"tmdb": {"original_language": "zh,cn"}},
+            "LABEL": {"include": "官方", "match": ["labels"]},
+            "SIZE": {"size_range": "100-400"},
+            "SEED": {"seeders": "5"},
+            "PUB": {"publish_time": "0-120"},
+            "SITE": {"include": "Alpha", "match": ["site_name"]},
+        }
+        torrent = _torrent(
+            site_name="Alpha",
+            title="Show S01E01-E02 1080p",
+            labels=["官方"],
+            size=600 * 1024 * 1024,
+            seeders=8,
+            pubdate=(datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        media = _media(original_language="zh")
+
+        result = moviepilot_rust.filter_torrents_fast(
+            groups,
+            [torrent],
+            rule_set,
+            media,
+            build_options(),
+        )
+
+        self.assertEqual(result, [(0, 100)])
