@@ -3147,12 +3147,30 @@ fn match_release_group(title: &str, regex: Option<&Regex>) -> Option<String> {
     let regex = regex?;
     let title = format!("{title} ");
     let mut unique = Vec::new();
-    for cap in regex.captures_iter(&title) {
+    let mut search_start = 0;
+    while search_start < title.len() {
+        let remainder = &title[search_start..];
+        let Some(matched) = regex.find(remainder) else {
+            break;
+        };
+        let matched_start = search_start + matched.start();
+        let matched_end = search_start + matched.end();
+        let matched_text = &title[matched_start..matched_end];
+        let Some(cap) = regex.captures(matched_text) else {
+            search_start = matched_end;
+            continue;
+        };
         if let Some(item) = cap.get(2) {
             let value = item.as_str().to_string();
             if !unique.contains(&value) {
                 unique.push(value);
             }
+            search_start = matched_start + item.end();
+        } else {
+            search_start = matched_end;
+        }
+        if search_start <= matched_start {
+            search_start = matched_end;
         }
     }
     (!unique.is_empty()).then(|| unique.join("@"))
@@ -3240,8 +3258,9 @@ fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<PyObject> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_meta_info, extract_video_bit, find_explicit_metainfo, init_subtitle, prepare_words,
-        strip_file_size, MetaResult, ParseOptions, ROMAN_NUMERALS_PATTERN,
+        build_meta_info, build_release_group_regex, extract_video_bit, find_explicit_metainfo,
+        init_subtitle, match_release_group, prepare_words, strip_file_size, MetaResult,
+        ParseOptions, ROMAN_NUMERALS_PATTERN,
     };
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
@@ -3372,5 +3391,18 @@ mod tests {
 
         assert_eq!(meta.en_name.as_deref(), Some("Amazon Forever"));
         assert_eq!(meta.year.as_deref(), Some("2004"));
+    }
+
+    /// 验证相邻制作组共用分隔符时不会漏掉后一个匹配项。
+    #[test]
+    fn release_group_keeps_adjacent_matches_split_by_ampersand() {
+        let regex = build_release_group_regex("VCB-Studio|hyakuhuyu|DMG|GM-Team");
+
+        let matched = match_release_group(
+            "[DMG&VCB-Studio] Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e",
+            regex.as_ref(),
+        );
+
+        assert_eq!(matched.as_deref(), Some("DMG@VCB-Studio"));
     }
 }
