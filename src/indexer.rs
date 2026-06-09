@@ -111,6 +111,42 @@ pub(crate) fn parse_indexer_torrents_fast(
     Ok(Some(result.into()))
 }
 
+/// 批量解析普通配置 indexer 字幕页面，覆盖 SubtitleInfo 所需字段。
+#[pyfunction]
+#[pyo3(signature = (html_text, domain, list_config, fields, result_num=100))]
+pub(crate) fn parse_indexer_subtitles_fast(
+    py: Python<'_>,
+    html_text: &str,
+    domain: &str,
+    list_config: &Bound<'_, PyDict>,
+    fields: &Bound<'_, PyDict>,
+    result_num: usize,
+) -> PyResult<Option<PyObject>> {
+    let Some(list_selector_text) = get_optional_string(list_config, "selector")? else {
+        return Ok(None);
+    };
+    if list_selector_text.is_empty() {
+        return Ok(None);
+    }
+    let document = Html::parse_document(html_text);
+    let Some(rows) = select_site_elements(document.root_element(), &list_selector_text) else {
+        return Ok(None);
+    };
+    let result = PyList::empty(py);
+    let field_specs = build_field_specs(fields)?;
+    let field_map = field_specs
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<HashMap<&str, &FieldSpec<'_>>>();
+    for row in rows.into_iter().take(result_num) {
+        match parse_subtitle_row(py, row, domain, &field_map)? {
+            RowParseResult::Empty => {}
+            RowParseResult::Item(item) => result.append(item)?,
+        }
+    }
+    Ok(Some(result.into()))
+}
+
 /// 预处理字段配置，保留 Python 字典引用以避免重复转换整份配置。
 fn build_field_specs<'py>(fields: &Bound<'py, PyDict>) -> PyResult<Vec<FieldSpec<'py>>> {
     let mut specs = Vec::new();
@@ -263,6 +299,88 @@ fn parse_indexer_row(
             }
         }
     }
+
+    if output.is_empty() {
+        return Ok(RowParseResult::Empty);
+    }
+    Ok(RowParseResult::Item(output.into()))
+}
+
+/// 解析单行字幕信息，字段输出对齐 Python 侧 SubtitleInfo。
+fn parse_subtitle_row(
+    py: Python<'_>,
+    row: ElementRef<'_>,
+    domain: &str,
+    field_map: &HashMap<&str, &FieldSpec<'_>>,
+) -> PyResult<RowParseResult> {
+    let output = PyDict::new(py);
+    let mut cache = BTreeMap::new();
+    let mut resolving = HashSet::new();
+
+    if let Some(value) = eval_field_by_name(row, field_map, "details", &mut cache, &mut resolving)?
+    {
+        if !value.is_empty() {
+            output.set_item("page_url", normalize_site_link(domain, &value, true))?;
+        }
+    }
+    if let Some(value) = eval_field_by_name(row, field_map, "download", &mut cache, &mut resolving)?
+    {
+        if !value.is_empty() {
+            output.set_item("enclosure", normalize_site_link(domain, &value, false))?;
+        }
+    }
+    if let Some(value) = eval_field_by_name(row, field_map, "size", &mut cache, &mut resolving)? {
+        output.set_item("size", parse_filesize_text(value.replace('\n', "").trim()))?;
+    }
+    if let Some(value) =
+        eval_field_by_name(row, field_map, "date_added", &mut cache, &mut resolving)?
+    {
+        if !value.is_empty() {
+            output.set_item("pubdate", normalize_pubdate_text(&value))?;
+        }
+    }
+    if let Some(value) =
+        eval_field_by_name(row, field_map, "date_elapsed", &mut cache, &mut resolving)?
+    {
+        if !value.is_empty() {
+            output.set_item("date_elapsed", value.replace('\n', " ").trim().to_string())?;
+        }
+    }
+    if let Some(value) = eval_field_by_name(row, field_map, "grabs", &mut cache, &mut resolving)? {
+        output.set_item("grabs", parse_peer_count(&value))?;
+    }
+    if let Some(value) =
+        eval_field_by_name(row, field_map, "language_icon", &mut cache, &mut resolving)?
+    {
+        if !value.is_empty() {
+            output.set_item("language_icon", normalize_site_link(domain, &value, true))?;
+        }
+    }
+    if let Some(value) = eval_field_by_name(row, field_map, "report", &mut cache, &mut resolving)? {
+        if !value.is_empty() {
+            output.set_item("report_url", normalize_site_link(domain, &value, true))?;
+        }
+    }
+
+    for (source_key, target_key) in [
+        ("title", "title"),
+        ("description", "description"),
+        ("language", "language"),
+        ("uploader", "uploader"),
+        ("torrent_id", "torrent_id"),
+        ("subtitle_id", "subtitle_id"),
+        ("file_name", "file_name"),
+    ] {
+        if let Some(value) =
+            eval_field_by_name(row, field_map, source_key, &mut cache, &mut resolving)?
+        {
+            if !value.is_empty() {
+                output.set_item(target_key, value.replace('\n', " ").trim().to_string())?;
+            }
+        }
+    }
+
+    fill_subtitle_ids(&output)?;
 
     if output.is_empty() {
         return Ok(RowParseResult::Empty);
@@ -1069,6 +1187,36 @@ fn query_param_value(text: &str, key: &str) -> Option<String> {
     form_urlencoded::parse(query.as_bytes())
         .find(|(param_key, _)| param_key == key)
         .map(|(_, value)| value.to_string())
+}
+
+/// 从字幕下载链接补齐 torrent_id 和 subtitle_id。
+fn fill_subtitle_ids(output: &Bound<'_, PyDict>) -> PyResult<()> {
+    let Some(enclosure_obj) = output.get_item("enclosure")? else {
+        return Ok(());
+    };
+    if enclosure_obj.is_none() {
+        return Ok(());
+    }
+    let enclosure = enclosure_obj.extract::<String>()?;
+    if !output.contains("torrent_id")? {
+        if let Some(torrent_id) = query_param_value(&enclosure, "torrentid")
+            .or_else(|| query_param_value(&enclosure, "torrent_id"))
+        {
+            if !torrent_id.is_empty() {
+                output.set_item("torrent_id", torrent_id)?;
+            }
+        }
+    }
+    if !output.contains("subtitle_id")? {
+        if let Some(subtitle_id) = query_param_value(&enclosure, "subid")
+            .or_else(|| query_param_value(&enclosure, "subtitle"))
+        {
+            if !subtitle_id.is_empty() {
+                output.set_item("subtitle_id", subtitle_id)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 标准化基础 URL，与 Python UrlUtils.standardize_base_url 保持一致。

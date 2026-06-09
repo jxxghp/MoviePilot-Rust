@@ -214,3 +214,86 @@ class IndexerPublicEntryTest(TestCase):
         )
 
         self.assertEqual(result[0]["pubdate"], "2025-06-02 03:04:05")
+
+    def test_subtitle_parser_handles_hhanclub_card_grid(self):
+        """Rust 字幕解析应支持憨憨新版卡片网格结构。"""
+        html = """
+        <div class="flex flex-col w-full items-center mt-[25px] gap-y-[10px] bg-[#F1F3F5] !rounded-md p-5" id="subtitles-table">
+            <div class="grid grid-cols-[10%_60%_10%_10%_10%] w-[95%] !rounded-md py-1 items-center bg-[#FFFFFF]/[0.7]">
+                <div><img class="w-[70px] h-[46px] pl-5" src="pic/flag/hongkong.gif"></div>
+                <div class="flex flex-col">
+                    <div class="flex flex-row gap-x-[45px]">
+                        <a href="downloadsubs.php?torrentid=482&amp;subid=1736">Green Snake 1993 Blu-ray 1080P AVC DTS-HDMA 5.1-MTeam</a>
+                    </div>
+                    <div>
+                        <div><a href="https://hhanclub.net/userdetails.php?id=26319"><b>thuniverse</b></a></div>
+                    </div>
+                </div>
+                <div><div>111.99&nbsp;KB</div></div>
+                <div><div><span title="2026-04-21 20:54:37">1月18天</span></div></div>
+                <div><div><a href="report.php?subtitle=1736"><img src="styles/HHan/icons/icon-report.svg" alt="举报"></a></div></div>
+            </div>
+            <div class="grid grid-cols-[10%_60%_10%_10%_10%] w-[95%] !rounded-md py-1 items-center bg-[#FFFFFF]/[0.7]">
+                <div><img class="w-[70px] h-[46px] pl-5" src="pic/flag/china.gif"></div>
+                <div class="flex flex-col">
+                    <div class="flex flex-row gap-x-[45px]">
+                        <a href="downloadsubs.php?torrentid=48866&amp;subid=564">Green.Snake.2021.2160p.IMAX.WEB-DL.H265.HDR.DTS-HHWEB.CHS</a>
+                    </div>
+                    <div>
+                        <div><a href="https://hhanclub.net/userdetails.php?id=11151"><b>pggezi</b></a></div>
+                    </div>
+                </div>
+                <div><div>58.52&nbsp;KB</div></div>
+                <div><div><span title="2023-08-06 15:15:26">2年10月</span></div></div>
+                <div><div><a href="report.php?subtitle=564"><img src="styles/HHan/icons/icon-report.svg" alt="举报"></a></div></div>
+            </div>
+        </div>
+        """
+        fields = {
+            "language_icon": {"selector": "div:nth-child(1) img", "attribute": "src"},
+            "title": {"selector": 'div:nth-child(2) a[href*="downloadsubs.php"]'},
+            "download": {"selector": 'div:nth-child(2) a[href*="downloadsubs.php"]', "attribute": "href"},
+            "size": {"selector": "div:nth-child(3)"},
+            "date_added": {"selector": "div:nth-child(4) span", "attribute": "title"},
+            "date_elapsed": {"selector": "div:nth-child(4) span"},
+            "uploader": {"selector": "div:nth-child(2) a[href*=\"userdetails.php\"]"},
+            "report": {"selector": 'div:nth-child(5) a[href*="report.php"]', "attribute": "href"},
+        }
+
+        result = moviepilot_rust.parse_indexer_subtitles_fast(
+            html,
+            "https://hhanclub.net/",
+            {"selector": "#subtitles-table > div"},
+            fields,
+            100,
+        )
+
+        self.assertEqual(
+            result,
+            [
+                {
+                    "enclosure": "https://hhanclub.net/downloadsubs.php?torrentid=482&subid=1736",
+                    "size": 114678,
+                    "pubdate": "2026-04-21 20:54:37",
+                    "date_elapsed": "1月18天",
+                    "language_icon": "https://hhanclub.net/pic/flag/hongkong.gif",
+                    "report_url": "https://hhanclub.net/report.php?subtitle=1736",
+                    "title": "Green Snake 1993 Blu-ray 1080P AVC DTS-HDMA 5.1-MTeam",
+                    "uploader": "thuniverse",
+                    "torrent_id": "482",
+                    "subtitle_id": "1736",
+                },
+                {
+                    "enclosure": "https://hhanclub.net/downloadsubs.php?torrentid=48866&subid=564",
+                    "size": 59924,
+                    "pubdate": "2023-08-06 15:15:26",
+                    "date_elapsed": "2年10月",
+                    "language_icon": "https://hhanclub.net/pic/flag/china.gif",
+                    "report_url": "https://hhanclub.net/report.php?subtitle=564",
+                    "title": "Green.Snake.2021.2160p.IMAX.WEB-DL.H265.HDR.DTS-HHWEB.CHS",
+                    "uploader": "pggezi",
+                    "torrent_id": "48866",
+                    "subtitle_id": "564",
+                },
+            ],
+        )
