@@ -129,7 +129,7 @@ class IndexerPublicEntryTest(TestCase):
         """
         fields = {
             "title_default": {"selector": 'a[href*="details.php?id="]'},
-            "missing_days": {"defualt_value": "2", "selector": "span.missing"},
+            "missing_days": {"default_value": "2", "selector": "span.missing"},
             "title": {"text": "{{ fields['title_default'] }} {{ (fields['missing_days']|int)*86400 }}"},
         }
 
@@ -272,8 +272,8 @@ class IndexerPublicEntryTest(TestCase):
             ],
         )
 
-    def test_subtitle_parser_ignores_outer_nexus_table_rows(self):
-        """字幕解析入口应只使用 NexusPHP 内层字幕行。"""
+    def test_subtitle_parser_uses_generic_selector_for_nexus_table_rows(self):
+        """字幕解析入口应使用通用选择器语义。"""
         html = """
         <table><tr><td class="rowfollow">
           <table>
@@ -315,10 +315,11 @@ class IndexerPublicEntryTest(TestCase):
             100,
         )
 
-        self.assertEqual([item["title"] for item in result], ["The.Capture.S01", "The.Capture.S02"])
+        self.assertEqual([item["title"] for item in result], ["The.Capture.S01", "The.Capture.S01", "The.Capture.S02"])
         self.assertEqual(result[0]["language"], "添加时间")
         self.assertEqual(result[0]["language_icon"], "data:image/svg+xml;base64,xxx")
-        self.assertEqual(result[1]["language"], "English")
+        self.assertEqual(result[1]["language"], "添加时间")
+        self.assertEqual(result[2]["language"], "English")
 
     def test_subtitle_parser_handles_pttime_shifted_columns(self):
         """字幕解析入口应支持 PT时间 的纯文本语言和偏移列。"""
