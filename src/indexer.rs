@@ -1158,7 +1158,7 @@ fn selector_exists_with_plan(row: ElementRef<'_>, selector: &SelectorPlan) -> bo
 
 /// 拼接详情和下载链接。
 fn normalize_site_link(domain: &str, link: &str, protocol_relative: bool) -> String {
-    if link.starts_with("http") || link.starts_with("magnet") {
+    if Url::parse(link).is_ok() || link.starts_with("magnet:") || link.starts_with("data:") {
         return link.to_string();
     }
     if protocol_relative && link.starts_with("//") {

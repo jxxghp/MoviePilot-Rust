@@ -317,6 +317,7 @@ class IndexerPublicEntryTest(TestCase):
 
         self.assertEqual([item["title"] for item in result], ["The.Capture.S01", "The.Capture.S02"])
         self.assertEqual(result[0]["language"], "添加时间")
+        self.assertEqual(result[0]["language_icon"], "data:image/svg+xml;base64,xxx")
         self.assertEqual(result[1]["language"], "English")
 
     def test_subtitle_parser_handles_pttime_shifted_columns(self):
