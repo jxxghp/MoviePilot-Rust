@@ -129,7 +129,7 @@ pub(crate) fn parse_indexer_subtitles_fast(
         return Ok(None);
     }
     let document = Html::parse_document(html_text);
-    let Some(rows) = select_site_elements(document.root_element(), &list_selector_text) else {
+    let Some(rows) = select_subtitle_elements(document.root_element(), &list_selector_text) else {
         return Ok(None);
     };
     let result = PyList::empty(py);
@@ -381,6 +381,10 @@ fn parse_subtitle_row(
     }
 
     fill_subtitle_ids(&output)?;
+
+    if !output.contains("title")? || !output.contains("enclosure")? {
+        return Ok(RowParseResult::Empty);
+    }
 
     if output.is_empty() {
         return Ok(RowParseResult::Empty);
@@ -674,6 +678,42 @@ fn select_site_elements<'a>(
     Some(select_site_elements_with_plan(root, &plan))
 }
 
+/// 查询字幕列表行，避免 NexusPHP 外层表格行被 :has(td.rowfollow) 误命中。
+fn select_subtitle_elements<'a>(
+    root: ElementRef<'a>,
+    selector_text: &str,
+) -> Option<Vec<ElementRef<'a>>> {
+    if matches!(selector_text, "tr:has(td.rowfollow)" | "table tr:has(td.rowfollow)") {
+        let tr_selector = parse_css_selector("tr")?;
+        let download_selector = parse_css_selector("a[href*=\"downloadsubs.php\"]")?;
+        let table_selector = parse_css_selector("table")?;
+        return Some(
+            root.select(&tr_selector)
+                .filter(|row| {
+                    let cells = row
+                        .children()
+                        .filter_map(ElementRef::wrap)
+                        .filter(is_rowfollow_td)
+                        .collect::<Vec<_>>();
+                    cells.len() >= 3
+                        && cells
+                            .iter()
+                            .all(|cell| cell.select(&table_selector).next().is_none())
+                        && cells
+                            .into_iter()
+                            .any(|cell| cell.select(&download_selector).next().is_some())
+                })
+                .collect(),
+        );
+    }
+    select_site_elements(root, selector_text)
+}
+
+/// 判断元素是否是 NexusPHP 字幕表直接行单元格。
+fn is_rowfollow_td(element: &ElementRef<'_>) -> bool {
+    element.value().name() == "td" && element.value().classes().any(|class| class == "rowfollow")
+}
+
 /// 将站点选择器预编译为可复用计划，覆盖 PyQuery 的 :has("selector") 写法。
 fn parse_selector_plan(selector_text: &str) -> Option<SelectorPlan> {
     let Some(captures) = HAS_SELECTOR_RE.captures(selector_text) else {
@@ -703,7 +743,6 @@ fn parse_selector_plan(selector_text: &str) -> Option<SelectorPlan> {
         suffix,
     })
 }
-
 /// 执行预编译 selector 计划，避免每个字段每行重复解析 CSS。
 fn select_site_elements_with_plan<'a>(
     root: ElementRef<'a>,
