@@ -215,6 +215,109 @@ class IndexerPublicEntryTest(TestCase):
 
         self.assertEqual(result[0]["pubdate"], "2025-06-02 03:04:05")
 
+    def test_indexer_parser_reads_nexus_php_occurrence_time_cell(self):
+        """发生时间模式下应从 NexusPHP 时间单元格读取标准时间。"""
+        html = """
+        <table class="torrents">
+          <tr>
+            <td></td>
+            <td><table class="torrentname"><tr><td><a href="details.php?id=1">Movie.Title</a></td></tr></table></td>
+            <td></td>
+            <td class="rowfollow nowrap">2025-05-01<br/>12:13:14</td>
+          </tr>
+        </table>
+        """
+        fields = {
+            "title": {"selector": 'a[href*="details.php?id="]'},
+            "date_elapsed": {"selector": "td:nth-child(4) > span", "optional": True},
+            "date_added": {
+                "selector": "td:nth-child(4) > span",
+                "attribute": "title",
+                "optional": True,
+            },
+            "date": {
+                "text": "{% if fields['date_elapsed'] or fields['date_added'] %}"
+                "{{ fields['date_elapsed'] if fields['date_elapsed'] else fields['date_added'] }}"
+                "{% else %}now{% endif %}",
+                "filters": [{"name": "dateparse", "args": "%Y-%m-%d %H:%M:%S"}],
+            },
+        }
+
+        result = moviepilot_rust.parse_indexer_torrents_fast(
+            html,
+            "https://example.com/",
+            {"selector": 'table.torrents > tr:has("table.torrentname")'},
+            fields,
+            None,
+            100,
+        )
+
+        self.assertEqual(result[0]["pubdate"], "2025-05-01 12:13:14")
+
+    def test_indexer_parser_does_not_use_relative_date_as_pubdate(self):
+        """缺少标准时间时不能把相对时间写入 pubdate。"""
+        html = """
+        <table class="torrents">
+          <tr><td><a>Movie.Title</a><span class="elapsed">1小时</span></td></tr>
+        </table>
+        """
+        fields = {
+            "title": {"selector": "a"},
+            "date_elapsed": {"selector": "span.elapsed"},
+            "date": {
+                "text": "{% if fields['date_elapsed'] or fields['date_added'] %}"
+                "{{ fields['date_elapsed'] if fields['date_elapsed'] else fields['date_added'] }}"
+                "{% else %}now{% endif %}",
+                "filters": [{"name": "dateparse", "args": "%Y-%m-%d %H:%M:%S"}],
+            },
+        }
+
+        result = moviepilot_rust.parse_indexer_torrents_fast(
+            html,
+            "https://example.com/",
+            {"selector": "table.torrents > tr"},
+            fields,
+            None,
+            100,
+        )
+
+        self.assertNotIn("pubdate", result[0])
+
+    def test_indexer_parser_does_not_use_invalid_date_as_pubdate(self):
+        """列配置错位时不能把无效日期或 now 写入 pubdate。"""
+        html = """
+        <table class="torrents">
+          <tr>
+            <td><a>Movie.Title</a></td>
+            <td></td>
+            <td></td>
+            <td>0</td>
+          </tr>
+        </table>
+        """
+        fields = {
+            "title": {"selector": "a"},
+            "date_added": {"selector": "td:nth-child(4) > span", "attribute": "title"},
+            "date_elapsed": {"selector": "td:nth-child(4) > span"},
+            "date": {
+                "text": "{% if fields['date_elapsed'] or fields['date_added'] %}"
+                "{{ fields['date_elapsed'] if fields['date_elapsed'] else fields['date_added'] }}"
+                "{% else %}now{% endif %}",
+                "filters": [{"name": "dateparse", "args": "%Y-%m-%d %H:%M:%S"}],
+            },
+        }
+
+        result = moviepilot_rust.parse_indexer_torrents_fast(
+            html,
+            "https://example.com/",
+            {"selector": "table.torrents > tr"},
+            fields,
+            None,
+            100,
+        )
+
+        self.assertNotIn("pubdate", result[0])
+
     def test_subtitle_parser_handles_audiences_table_fields(self):
         """字幕解析入口应归一化 audiences 表格字段。"""
         html = """

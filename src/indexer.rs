@@ -58,6 +58,7 @@ enum RowParseResult {
 }
 
 struct QuerySpec {
+    selector_text: String,
     selector: SelectorPlan,
     attribute: Option<String>,
     remove_selectors: Vec<Selector>,
@@ -179,6 +180,7 @@ fn build_query_spec(selector_config: &Bound<'_, PyDict>) -> PyResult<Option<Quer
         return Ok(None);
     };
     Ok(Some(QuerySpec {
+        selector_text,
         selector,
         attribute: get_optional_string(selector_config, "attribute")?,
         remove_selectors: parse_remove_selectors(selector_config)?,
@@ -614,25 +616,149 @@ fn eval_pubdate_field(
     cache: &mut BTreeMap<String, String>,
     resolving: &mut HashSet<String>,
 ) -> PyResult<Option<String>> {
-    if let Some(value) = eval_field_by_name(row, field_map, "date", cache, resolving)? {
-        let normalized = normalize_pubdate_text(&value);
-        if is_standard_datetime(&normalized) || !field_map.contains_key("date_added") {
+    if let Some(date_added) = eval_date_component(row, field_map, "date_added", cache, resolving)? {
+        if let Some(normalized) = normalize_pubdate_candidate(&date_added) {
             return Ok(Some(normalized));
         }
-        if let Some(date_added) =
-            eval_field_by_name(row, field_map, "date_added", cache, resolving)?
-        {
-            let fallback = normalize_pubdate_text(&date_added);
-            if is_standard_datetime(&fallback) {
-                return Ok(Some(fallback));
-            }
-        }
-        return Ok(Some(normalized));
     }
-    Ok(
-        eval_field_by_name(row, field_map, "date_added", cache, resolving)?
-            .map(|value| normalize_pubdate_text(&value)),
+    if let Some(value) = eval_date_field_for_pubdate(row, field_map, cache, resolving)? {
+        if let Some(normalized) = normalize_pubdate_candidate(&value) {
+            return Ok(Some(normalized));
+        }
+    }
+    Ok(None)
+}
+
+/// 按 pubdate 语义解析 date 字段，避免通用 dateparse 把模板兜底 now 转成当前时间。
+fn eval_date_field_for_pubdate(
+    row: ElementRef<'_>,
+    field_map: &HashMap<&str, &FieldSpec<'_>>,
+    cache: &mut BTreeMap<String, String>,
+    resolving: &mut HashSet<String>,
+) -> PyResult<Option<String>> {
+    let Some(spec) = field_map.get("date").copied() else {
+        return Ok(None);
+    };
+    let Some(template) = spec.text_template.as_deref() else {
+        return eval_field_by_name(row, field_map, "date", cache, resolving);
+    };
+
+    let mut values = BTreeMap::new();
+    for key in extract_template_field_names(template) {
+        let value = if key == "date_elapsed" || key == "date_added" {
+            eval_date_component(row, field_map, &key, cache, resolving)?.unwrap_or_default()
+        } else {
+            eval_field_by_name(row, field_map, &key, cache, resolving)?.unwrap_or_default()
+        };
+        values.insert(key, value);
+    }
+    let rendered = render_jinja_template(template, &values).unwrap_or_default();
+    if rendered.trim().eq_ignore_ascii_case("now") || is_relative_pubdate_text(&rendered) {
+        return Ok(None);
+    }
+    if let Some(filters) = spec.filters.as_ref() {
+        return apply_text_filters(rendered, filters);
+    }
+    Ok(Some(rendered))
+}
+
+/// 读取 date_elapsed/date_added 依赖字段，兼容 NexusPHP 发生时间模式的纯文本单元格。
+fn eval_date_component(
+    row: ElementRef<'_>,
+    field_map: &HashMap<&str, &FieldSpec<'_>>,
+    name: &str,
+    cache: &mut BTreeMap<String, String>,
+    resolving: &mut HashSet<String>,
+) -> PyResult<Option<String>> {
+    let value = eval_field_by_name(row, field_map, name, cache, resolving)?;
+    if value
+        .as_deref()
+        .map(is_invalid_pubdate_source_text)
+        .unwrap_or(true)
+    {
+        let fallback = eval_date_cell_fallback(row, field_map, name);
+        if fallback
+            .as_deref()
+            .map(is_invalid_pubdate_source_text)
+            .unwrap_or(true)
+        {
+            return Ok(None);
+        }
+        return Ok(fallback);
+    }
+    Ok(value)
+}
+
+/// 从 span 时间选择器推导父单元格，用于读取 NexusPHP 的发生时间文本。
+fn eval_date_cell_fallback(
+    row: ElementRef<'_>,
+    field_map: &HashMap<&str, &FieldSpec<'_>>,
+    name: &str,
+) -> Option<String> {
+    let spec = field_map.get(name).copied()?;
+    let query = spec.query.as_ref()?;
+    let selector = date_cell_selector(&query.selector_text)?;
+    safe_query(
+        row,
+        Some(&QuerySpec {
+            selector_text: query.selector_text.clone(),
+            selector,
+            attribute: None,
+            remove_selectors: Vec::new(),
+            contents: query.contents,
+            index: query.index,
+        }),
     )
+}
+
+/// 只对以 span 结尾的时间选择器做父单元格兜底，避免误读其他列。
+fn date_cell_selector(selector_text: &str) -> Option<SelectorPlan> {
+    if !selector_text.contains("> span") {
+        return None;
+    }
+    let cell_selector = selector_text.split("> span").next()?.trim();
+    parse_selector_plan(cell_selector)
+}
+
+/// 判断是否为相对时间文本，避免写入不可排序的 pubdate。
+fn is_relative_pubdate_text(value: &str) -> bool {
+    let text = value.trim().to_ascii_lowercase();
+    if text.is_empty() || text.contains("ago") {
+        return text.contains("ago");
+    }
+    if Regex::new(r"\d{4}[-/年]\d{1,2}")
+        .ok()
+        .map(|regex| regex.is_match(&text))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    Regex::new(r"\d+\s*(秒|分钟|分|小时|天|周|月|年)")
+        .ok()
+        .map(|regex| regex.is_match(&text))
+        .unwrap_or(false)
+}
+
+/// 发布时间只能接受明确的标准时间，避免 date 模板里的 now 或列错位文本污染 pubdate。
+fn normalize_pubdate_candidate(value: &str) -> Option<String> {
+    let value = value.replace('\n', " ").trim().to_string();
+    if is_invalid_pubdate_source_text(&value) {
+        return None;
+    }
+    let normalized = normalize_pubdate_text(&value);
+    if is_standard_datetime(&normalized) {
+        return Some(normalized);
+    }
+    None
+}
+
+/// 判断源文本是否不适合参与 pubdate 解析。
+fn is_invalid_pubdate_source_text(value: &str) -> bool {
+    let value = value.trim();
+    value.is_empty()
+        || value == "0"
+        || value.eq_ignore_ascii_case("now")
+        || is_relative_pubdate_text(value)
 }
 
 /// 规范化发布时间文本为 MoviePilot 期望的字符串格式。
