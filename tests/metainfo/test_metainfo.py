@@ -239,6 +239,17 @@ class MetaInfoPublicEntryTest(TestCase):
         self.assertEqual(parsed["en_name"], "Amazon Forever")
         self.assertEqual(parsed["year"], "2004")
 
+    def test_unicode_apostrophe_title_does_not_panic_in_pinyin_check(self):
+        """英文名混入 Unicode 撇号时不应触发拼音分词库字节边界 panic。"""
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "CCTV-3 Yue Opera‘s Splendor And Enduring Legacy: "
+            "A Gala Celebrating The 120th Anniversary Of Its Birth "
+            "20260606 HDTV 1080i MP1 H 264-TPTV",
+            "越剧诞辰120周年晚会",
+            build_options(),
+        )
+        self.assertIn("Opera", parsed["en_name"])
+
     def test_emby_tmdbid_overrides_braced_metainfo_tmdbid(self):
         """同步后端 Emby tmdbid 覆盖内嵌媒体标签 tmdbid 的用例。"""
         parsed = moviepilot_rust.find_metainfo_fast("Movie {[tmdbid=111;type=movies]} [tmdbid=222]")

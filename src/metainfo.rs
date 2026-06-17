@@ -2450,13 +2450,16 @@ fn is_pinyin_like(name: &str) -> bool {
             (!cleaned.is_empty()).then_some(cleaned)
         })
         .collect::<Vec<_>>();
-    !words.is_empty()
-        && words.iter().all(|word| {
-            is_valid_syllable(word)
-                || segment(word)
-                    .first()
-                    .is_some_and(|item| !item.syllables.is_empty())
-        })
+    !words.is_empty() && words.iter().all(|word| is_ascii_pinyin_word(word))
+}
+
+/// 判断 ASCII 字母词是否可按普通音节或连续拼音拆分。
+fn is_ascii_pinyin_word(word: &str) -> bool {
+    word.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && (is_valid_syllable(word)
+            || segment(word)
+                .first()
+                .is_some_and(|item| !item.syllables.is_empty()))
 }
 
 /// 动漫标题预处理，移植原 MetaAnime 的清洗规则。
