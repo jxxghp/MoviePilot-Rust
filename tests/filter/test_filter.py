@@ -30,6 +30,21 @@ def _media(**kwargs):
     return SimpleNamespace(**kwargs)
 
 
+class _DebugLogger:
+    """用于测试中捕获 debug 日志的 Python logger 替身。"""
+
+    def __init__(self):
+        self.messages = []
+
+    def debug(self, message, *args):
+        if args:
+            try:
+                message = message % args
+            except TypeError:
+                pass
+        self.messages.append(message)
+
+
 class FilterPublicEntryTest(TestCase):
     """覆盖 MoviePilot 后端同步过来的过滤规则公开入口用例。"""
 
@@ -43,10 +58,12 @@ class FilterPublicEntryTest(TestCase):
         """同步后端括号、与、或优先级解析用例。"""
         result = moviepilot_rust.parse_filter_rule_fast("CNSUB & (4K | 1080P) & !BLU")
 
-        self.assertEqual(result, [[["CNSUB", "and", ["4K", "or", "1080P"]], "and", ["not", "BLU"]]])
+        self.assertEqual(
+            result, [[["CNSUB", "and", ["4K", "or", "1080P"]], "and", ["not", "BLU"]]]
+        )
 
     def test_filter_torrents_keeps_priority_and_boolean_rule_semantics(self):
-        """同步后端优先级和布尔规则过滤用例。"""
+        """同步后端优先级和布尔规则过滤用例，并验证返回值附带命中规则名。"""
         groups = [{"name": "test", "rule_string": "HDR & !BLU > DV"}]
         rule_set = {
             "HDR": {"include": "HDR"},
@@ -61,7 +78,13 @@ class FilterPublicEntryTest(TestCase):
 
         result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
 
-        self.assertEqual(result, [(0, 100), (1, 99)])
+        self.assertEqual(
+            [(index, priority) for (index, priority, _) in result],
+            [(0, 100), (1, 99)],
+        )
+        # 命中的规则名冒泡到返回结果，便于 Python 调试。
+        self.assertEqual(result[0][2], "HDR")
+        self.assertEqual(result[1][2], "DV")
 
     def test_filter_torrents_keeps_lazy_priority_level_parsing(self):
         """同步后端命中高优先级后不解析低优先级坏规则的用例。"""
@@ -71,7 +94,10 @@ class FilterPublicEntryTest(TestCase):
             {"KEEP": {"include": "Movie"}},
         )
 
-        self.assertEqual(result, [(0, 100)])
+        self.assertEqual(
+            [(index, priority) for (index, priority, _) in result], [(0, 100)]
+        )
+        self.assertEqual(result[0][2], "KEEP")
 
     def test_filter_torrents_keeps_sequential_rule_group_semantics(self):
         """同步后端多个规则组按顺序逐轮过滤的用例。"""
@@ -90,11 +116,16 @@ class FilterPublicEntryTest(TestCase):
 
         result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
 
-        self.assertEqual(result, [(0, 100)])
+        self.assertEqual(
+            [(index, priority) for (index, priority, _) in result], [(0, 100)]
+        )
+        self.assertEqual(result[0][2], "FREE")
 
     def test_filter_torrents_supports_full_rule_fields(self):
         """同步后端完整规则字段匹配 Rust 入口的用例。"""
-        groups = [{"name": "test", "rule_string": "TMDB & LABEL & SIZE & SEED & PUB & SITE"}]
+        groups = [
+            {"name": "test", "rule_string": "TMDB & LABEL & SIZE & SEED & PUB & SITE"}
+        ]
         rule_set = {
             "TMDB": {"tmdb": {"original_language": "zh,cn"}},
             "LABEL": {"include": "官方", "match": ["labels"]},
@@ -121,4 +152,89 @@ class FilterPublicEntryTest(TestCase):
             build_options(),
         )
 
-        self.assertEqual(result, [(0, 100)])
+        self.assertEqual(
+            [(index, priority) for (index, priority, _) in result], [(0, 100)]
+        )
+        self.assertEqual(result[0][2], "TMDB")
+
+
+class FilterDebugLoggingTest(TestCase):
+    """针对 issue #5977：Rust 加速模式下规则过滤日志不完善。"""
+
+    def test_logger_callback_receives_per_torrent_debug_lines(self):
+        """传入 Python logger 后，应为每条种子产生详细 debug 日志。"""
+        groups = [{"name": "test", "rule_string": "HDR & !BLU > DV"}]
+        rule_set = {
+            "HDR": {"include": "HDR"},
+            "DV": {"include": "DOVI"},
+            "BLU": {"include": "BluRay"},
+        }
+        torrents = [
+            _torrent(title="Movie HDR WEB-DL"),
+            _torrent(title="Movie DOVI"),
+            _torrent(title="Movie HDR BluRay"),
+        ]
+        logger = _DebugLogger()
+
+        moviepilot_rust.filter_torrents_fast(
+            groups, torrents, rule_set, None, None, logger
+        )
+
+        self.assertGreater(len(logger.messages), 0)
+        joined = "\n".join(logger.messages)
+        self.assertIn("匹配成功", joined)
+        # 匹配到具体哪条规则，不再只出现一条最终成功日志。
+        self.assertIn("HDR", joined)
+        self.assertIn("DOVI", joined)
+
+    def test_return_value_carries_matched_rule_name(self):
+        """返回值第三项必须为命中的具体规则名，便于上层打印与调试。"""
+        groups = [{"name": "test", "rule_string": "(A | B) & !SKIP"}]
+        rule_set = {
+            "A": {"include": "Alpha"},
+            "B": {"include": "Beta"},
+            "SKIP": {"include": "Skip"},
+        }
+        torrents = [
+            _torrent(title="Alpha WEB-DL"),
+            _torrent(title="Beta WEB-DL"),
+            _torrent(title="Skip Alpha WEB-DL"),
+        ]
+
+        result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
+
+        indices_and_rules = [
+            (index, matched_rule) for (index, _, matched_rule) in result
+        ]
+        # 前两条命中，第三条因命中 SKIP 被 NOT 排除，不进入结果。
+        self.assertEqual(indices_and_rules, [(0, "A"), (1, "B")])
+
+    def test_logger_may_be_none_without_crash(self):
+        """未传 logger 时，函数不得崩溃，保持原行为。"""
+        groups = [{"name": "test", "rule_string": "HDR"}]
+        rule_set = {"HDR": {"include": "HDR"}}
+        torrents = [_torrent(title="Movie HDR")]
+
+        result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][:2], (0, 100))
+        self.assertEqual(result[0][2], "HDR")
+
+    def test_boolean_not_branch_is_marked_with_bang_prefix(self):
+        """!RULE 分支应在命中时作为调试信息出现在成功日志中。"""
+        groups = [{"name": "test", "rule_string": "HDR & !BLU"}]
+        rule_set = {
+            "HDR": {"include": "HDR"},
+            "BLU": {"include": "BluRay"},
+        }
+        torrents = [_torrent(title="Movie HDR")]
+        logger = _DebugLogger()
+
+        moviepilot_rust.filter_torrents_fast(
+            groups, torrents, rule_set, None, None, logger
+        )
+
+        joined = "\n".join(logger.messages)
+        self.assertIn("匹配成功", joined)
+        self.assertIn("HDR", joined)

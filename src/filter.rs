@@ -25,6 +25,16 @@ enum RuleExpr {
     Or(Box<RuleExpr>, Box<RuleExpr>),
 }
 
+/// 单条种子的匹配结果摘要，用于向 Python 调用方返回更完整的调试信息。
+#[derive(Clone, Debug, Default)]
+struct TorrentMatch {
+    priority: i64,
+    /// 最终命中的、起决定作用的规则名（布尔表达式中最内层的 Name 节点）。
+    matched_rules: Vec<String>,
+    /// 命中的优先级等级字符串，用于日志。
+    matched_level: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
     Name(String),
@@ -62,7 +72,7 @@ struct MediaSnapshot {
 }
 
 #[pyfunction]
-#[pyo3(signature = (groups, torrent_list, rule_set, mediainfo=None, metainfo_options=None))]
+#[pyo3(signature = (groups, torrent_list, rule_set, mediainfo=None, metainfo_options=None, logger=None))]
 pub(crate) fn filter_torrents_fast(
     py: Python<'_>,
     groups: &Bound<'_, PyList>,
@@ -70,6 +80,7 @@ pub(crate) fn filter_torrents_fast(
     rule_set: &Bound<'_, PyDict>,
     mediainfo: Option<&Bound<'_, PyAny>>,
     metainfo_options: Option<&Bound<'_, PyDict>>,
+    logger: Option<PyObject>,
 ) -> PyResult<PyObject> {
     let groups = parse_filter_groups(groups)?;
     if groups.is_empty() {
@@ -82,7 +93,8 @@ pub(crate) fn filter_torrents_fast(
     let mut episode_count_cache: HashMap<String, i64> = HashMap::new();
     for (index, torrent_obj) in torrent_list.iter().enumerate() {
         let torrent = TorrentSnapshot::from_py(&torrent_obj, &matcher.match_fields)?;
-        if let Some(priority) = match_torrent(
+        let title_for_log = torrent.title.clone();
+        if let Some(matched) = match_torrent(
             py,
             &torrent,
             &groups,
@@ -91,11 +103,62 @@ pub(crate) fn filter_torrents_fast(
             metainfo_options,
             &mut parsed_rule_cache,
             &mut episode_count_cache,
+            logger.as_ref(),
+            index,
         )? {
-            results.append((index, priority))?;
+            log_match_success(py, logger.as_ref(), index, &title_for_log, &matched)?;
+            results.append((
+                index,
+                matched.priority,
+                matched
+                    .matched_rules
+                    .iter()
+                    .next()
+                    .cloned()
+                    .unwrap_or_default(),
+            ))?;
         }
     }
     Ok(results.into())
+}
+
+/// 通过 Python logger 对象输出一条 debug 日志，用于保留原 Python 过滤链路的规则命中日志。
+fn log_debug(py: Python<'_>, logger: Option<&PyObject>, message: &str) -> PyResult<()> {
+    let Some(logger) = logger else {
+        return Ok(());
+    };
+    // 忽略 Python 调用过程中的异常，避免日志失败导致主流程中断。
+    let _ = logger.call_method1(py, "debug", (message,));
+    Ok(())
+}
+
+/// 输出种子最终被匹配成功的摘要日志。
+fn log_match_success(
+    py: Python<'_>,
+    logger: Option<&PyObject>,
+    index: usize,
+    title: &str,
+    matched: &TorrentMatch,
+) -> PyResult<()> {
+    let Some(logger) = logger else {
+        return Ok(());
+    };
+    let rules = matched
+        .matched_rules
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let level = matched
+        .matched_level
+        .as_deref()
+        .unwrap_or("(未知等级)");
+    let message = format!(
+        "[#{index}] 匹配成功: title={title:?} 优先级={} 命中规则=[{rules}] 命中等级={level}",
+        matched.priority
+    );
+    let _ = logger.call_method1(py, "debug", (message,));
+    Ok(())
 }
 
 #[pyfunction]
@@ -477,7 +540,7 @@ impl MediaSnapshot {
     }
 }
 
-/// 执行完整种子过滤并返回匹配优先级。
+/// 执行完整种子过滤并返回匹配优先级及命中规则的调试信息。
 fn match_torrent(
     py: Python<'_>,
     torrent: &TorrentSnapshot,
@@ -487,13 +550,16 @@ fn match_torrent(
     metainfo_options: Option<&Bound<'_, PyDict>>,
     parsed_rule_cache: &mut HashMap<String, RuleExpr>,
     episode_count_cache: &mut HashMap<String, i64>,
-) -> PyResult<Option<i64>> {
-    let mut last_priority = None;
+    logger: Option<&PyObject>,
+    index: usize,
+) -> PyResult<Option<TorrentMatch>> {
+    let mut last_match: Option<TorrentMatch> = None;
     for group in groups {
         let mut priority = 100i64;
-        let mut matched_priority = None;
+        let mut group_match: Option<TorrentMatch> = None;
         for level in &group.levels {
             let expr = parse_cached_expr(level, parsed_rule_cache)?;
+            let mut collected: Vec<String> = Vec::new();
             if match_group(
                 py,
                 torrent,
@@ -502,18 +568,41 @@ fn match_torrent(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                logger,
+                &mut collected,
             )? {
-                matched_priority = Some(priority);
+                group_match = Some(TorrentMatch {
+                    priority,
+                    matched_rules: collected,
+                    matched_level: Some(level.clone()),
+                });
                 break;
             }
             priority -= 1;
         }
-        match matched_priority {
-            Some(priority) => last_priority = Some(priority),
-            None => return Ok(None),
+        if let Some(current) = group_match {
+            log_debug(
+                py,
+                logger,
+                &format!(
+                    "[#{index}] 分组匹配成功: title={:?} 优先级={} 命中规则=[{}] 命中等级={:?}",
+                    torrent.title,
+                    current.priority,
+                    current.matched_rules.join(", "),
+                    current.matched_level
+                ),
+            )?;
+            last_match = Some(current);
+        } else {
+            log_debug(
+                py,
+                logger,
+                &format!("[#{index}] 分组未匹配: title={:?}", torrent.title),
+            )?;
+            return Ok(None);
         }
     }
-    Ok(last_priority)
+    Ok(last_match)
 }
 
 /// 延迟解析并缓存优先级层级表达式，保持命中高优先级后不解析低层级的语义。
@@ -533,7 +622,7 @@ fn parse_cached_expr<'a>(
     Ok(parsed_rule_cache.get(level).expect("cached rule exists"))
 }
 
-/// 递归求值规则布尔表达式。
+/// 递归求值规则布尔表达式，同时将真实产生匹配的叶子规则名收集到 matched_rules。
 fn match_group(
     py: Python<'_>,
     torrent: &TorrentSnapshot,
@@ -542,27 +631,49 @@ fn match_group(
     media: &MediaSnapshot,
     metainfo_options: Option<&Bound<'_, PyDict>>,
     episode_count_cache: &mut HashMap<String, i64>,
+    logger: Option<&PyObject>,
+    matched_rules: &mut Vec<String>,
 ) -> PyResult<bool> {
     match expr {
-        RuleExpr::Name(name) => match_rule(
-            py,
-            torrent,
-            name,
-            matcher,
-            media,
-            metainfo_options,
-            episode_count_cache,
-        ),
-        RuleExpr::Not(inner) => Ok(!match_group(
-            py,
-            torrent,
-            inner,
-            matcher,
-            media,
-            metainfo_options,
-            episode_count_cache,
-        )?),
+        RuleExpr::Name(name) => {
+            let matched = match_rule(
+                py,
+                torrent,
+                name,
+                matcher,
+                media,
+                metainfo_options,
+                episode_count_cache,
+            )?;
+            if matched {
+                matched_rules.push(name.clone());
+            }
+            Ok(matched)
+        }
+        RuleExpr::Not(inner) => {
+            let mut sub_rules: Vec<String> = Vec::new();
+            let matched = !match_group(
+                py,
+                torrent,
+                inner,
+                matcher,
+                media,
+                metainfo_options,
+                episode_count_cache,
+                logger,
+                &mut sub_rules,
+            )?;
+            if matched {
+                // NOT 分支的真实作用是排除某些规则，语义上作为命中信息保留 "!<name>"。
+                for name in sub_rules {
+                    matched_rules.push(format!("!{name}"));
+                }
+            }
+            Ok(matched)
+        }
         RuleExpr::And(left, right) => {
+            let mut left_rules: Vec<String> = Vec::new();
+            let mut right_rules: Vec<String> = Vec::new();
             if !match_group(
                 py,
                 torrent,
@@ -571,10 +682,12 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                logger,
+                &mut left_rules,
             )? {
                 return Ok(false);
             }
-            match_group(
+            if !match_group(
                 py,
                 torrent,
                 right,
@@ -582,9 +695,18 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
-            )
+                logger,
+                &mut right_rules,
+            )? {
+                return Ok(false);
+            }
+            matched_rules.extend(left_rules);
+            matched_rules.extend(right_rules);
+            Ok(true)
         }
         RuleExpr::Or(left, right) => {
+            let mut left_rules: Vec<String> = Vec::new();
+            let mut right_rules: Vec<String> = Vec::new();
             if match_group(
                 py,
                 torrent,
@@ -593,10 +715,13 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                logger,
+                &mut left_rules,
             )? {
+                matched_rules.extend(left_rules);
                 return Ok(true);
             }
-            match_group(
+            if match_group(
                 py,
                 torrent,
                 right,
@@ -604,7 +729,13 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
-            )
+                logger,
+                &mut right_rules,
+            )? {
+                matched_rules.extend(right_rules);
+                return Ok(true);
+            }
+            Ok(false)
         }
     }
 }
