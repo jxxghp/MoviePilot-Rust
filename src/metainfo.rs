@@ -9,7 +9,9 @@ use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::borrow::Cow;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -387,9 +389,9 @@ static KEYWORD_META_SUFFIX_RE: Lazy<Regex> = Lazy::new(|| {
 static EPISODE_VERSION_SUFFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"v\d+$").unwrap());
 static TOKEN_SPLIT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\s+|\(|\)|\[|]|-|【|】|/|～|;|&|\||#|_|「|」|~").unwrap());
-static STREAMING_PLATFORM_CACHE: Lazy<Mutex<HashMap<usize, Arc<HashMap<String, String>>>>> =
+static STREAMING_PLATFORM_CACHE: Lazy<Mutex<HashMap<u64, Arc<HashMap<String, String>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-static PARSE_OPTIONS_CACHE: Lazy<Mutex<HashMap<usize, Arc<ParseOptions>>>> =
+static PARSE_OPTIONS_CACHE: Lazy<Mutex<HashMap<u64, Arc<ParseOptions>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static CUSTOM_WORD_RE_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -535,7 +537,7 @@ pub(crate) fn find_metainfo_fast(py: Python<'_>, title: &str) -> PyResult<PyObje
 }
 
 impl ParseOptions {
-    /// 按 Python 配置字典对象身份缓存解析配置，避免每个标题重复跨语言解包。
+    /// 按配置内容签名缓存解析配置，避免 Python 字典地址复用时误命中旧配置。
     fn from_py_cached(options: Option<&Bound<'_, PyDict>>) -> PyResult<Arc<Self>> {
         let Some(options) = options else {
             return Ok(Arc::new(Self {
@@ -546,12 +548,6 @@ impl ParseOptions {
                 streaming_platforms: Arc::new(HashMap::new()),
             }));
         };
-        let cache_key = options.as_ptr() as usize;
-        if let Ok(guard) = PARSE_OPTIONS_CACHE.lock() {
-            if let Some(cached) = guard.get(&cache_key) {
-                return Ok(cached.clone());
-            }
-        }
         let release_groups = options
             .get_item("release_groups")?
             .filter(|value| !value.is_none())
@@ -560,15 +556,27 @@ impl ParseOptions {
             .filter(|value| !value.is_empty())
             .unwrap_or_default();
         let customization_patterns = get_config_string_list(options, "customization")?;
+        let custom_words = get_config_string_list(options, "custom_words")?;
+        let media_exts = get_config_string_list(options, "media_exts")?;
+        let streaming_platforms = get_streaming_platforms(options)?;
+        let cache_key = parse_options_cache_key(
+            &custom_words,
+            &media_exts,
+            &release_groups,
+            &customization_patterns,
+            streaming_platforms.as_ref(),
+        );
+        if let Ok(guard) = PARSE_OPTIONS_CACHE.lock() {
+            if let Some(cached) = guard.get(&cache_key) {
+                return Ok(cached.clone());
+            }
+        }
         let parsed = Arc::new(Self {
-            custom_words: get_config_string_list(options, "custom_words")?,
-            media_exts: get_config_string_list(options, "media_exts")?
-                .into_iter()
-                .map(|item| item.to_lowercase())
-                .collect(),
+            custom_words,
+            media_exts: media_exts.iter().map(|item| item.to_lowercase()).collect(),
             release_group_regex: build_release_group_regex(&release_groups),
             customization_regex: build_customization_regex(&customization_patterns),
-            streaming_platforms: get_streaming_platforms(options)?,
+            streaming_platforms,
         });
         if let Ok(mut guard) = PARSE_OPTIONS_CACHE.lock() {
             guard.insert(cache_key, parsed.clone());
@@ -587,12 +595,6 @@ fn get_streaming_platforms(options: &Bound<'_, PyDict>) -> PyResult<Arc<HashMap<
         return Ok(Arc::new(result));
     }
     let dict = value.downcast::<PyDict>()?;
-    let cache_key = dict.as_ptr() as usize;
-    if let Ok(guard) = STREAMING_PLATFORM_CACHE.lock() {
-        if let Some(cached) = guard.get(&cache_key) {
-            return Ok(cached.clone());
-        }
-    }
     for (key, value) in dict.iter() {
         let key = key.str()?.to_str()?.to_uppercase();
         let value = value.str()?.to_str()?.to_string();
@@ -600,11 +602,48 @@ fn get_streaming_platforms(options: &Bound<'_, PyDict>) -> PyResult<Arc<HashMap<
             result.insert(key, value);
         }
     }
+    let cache_key = streaming_platforms_cache_key(&result);
+    if let Ok(guard) = STREAMING_PLATFORM_CACHE.lock() {
+        if let Some(cached) = guard.get(&cache_key) {
+            return Ok(cached.clone());
+        }
+    }
     let result = Arc::new(result);
     if let Ok(mut guard) = STREAMING_PLATFORM_CACHE.lock() {
         guard.insert(cache_key, result.clone());
     }
     Ok(result)
+}
+
+/// 计算 MetaInfo 配置缓存键，避免依赖 Python 对象生命周期和内存地址。
+fn parse_options_cache_key(
+    custom_words: &[String],
+    media_exts: &[String],
+    release_groups: &str,
+    customization_patterns: &[String],
+    streaming_platforms: &HashMap<String, String>,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    "parse_options_v2".hash(&mut hasher);
+    custom_words.hash(&mut hasher);
+    media_exts.hash(&mut hasher);
+    release_groups.hash(&mut hasher);
+    customization_patterns.hash(&mut hasher);
+    streaming_platforms_cache_key(streaming_platforms).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// 计算流媒体平台表的稳定签名，HashMap 需先排序才能跨进程顺序稳定。
+fn streaming_platforms_cache_key(streaming_platforms: &HashMap<String, String>) -> u64 {
+    let mut entries = streaming_platforms.iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(right.0));
+    let mut hasher = DefaultHasher::new();
+    "streaming_platforms_v2".hash(&mut hasher);
+    for (key, value) in entries {
+        key.hash(&mut hasher);
+        value.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// 构建标题入口的完整元信息。

@@ -152,6 +152,24 @@ class MetaInfoPublicEntryTest(TestCase):
         )
         self.assertEqual(parsed["apply_words"], custom_words)
 
+    def test_parse_options_cache_tracks_mutated_dict_content(self):
+        """MetaInfo 配置缓存不能因 Python 字典复用而沿用旧识别词。"""
+        options = build_options(custom_words=["测试替换 => "])
+        first = moviepilot_rust.parse_metainfo_fast(
+            "电影测试替换名称 (2024)",
+            None,
+            options,
+        )
+        options["custom_words"] = []
+        second = moviepilot_rust.parse_metainfo_fast(
+            "电影测试替换名称 (2024)",
+            None,
+            options,
+        )
+
+        self.assertEqual(first["apply_words"], ["测试替换 => "])
+        self.assertEqual(second["apply_words"], [])
+
     def test_metainfo_preserves_original_name_when_custom_words_applied(self):
         """同步后端应用识别词后保留 original_name 的用例。"""
         parsed = moviepilot_rust.parse_metainfo_fast(
