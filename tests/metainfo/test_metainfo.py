@@ -152,6 +152,19 @@ class MetaInfoPublicEntryTest(TestCase):
         )
         self.assertEqual(parsed["apply_words"], custom_words)
 
+    def test_hdr_vivid_effect_extracted_for_video_title(self):
+        """合并写法 HDRVivid 应识别为资源效果。"""
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "Never-Ending Summer 2026 S01E18-S01E19 2160p WEB-DL 50Fps "
+            "HDRVivid H265 10bit AAC-XXWEB",
+            None,
+            build_options(),
+        )
+
+        self.assertEqual(parsed["resource_type"], "WEB-DL")
+        self.assertEqual(parsed["resource_effect"], "HDRVivid")
+        self.assertEqual(parsed["fps"], 50)
+
     def test_parse_options_cache_tracks_mutated_dict_content(self):
         """MetaInfo 配置缓存不能因 Python 字典复用而沿用旧识别词。"""
         options = build_options(custom_words=["测试替换 => "])
