@@ -201,7 +201,7 @@ static SOURCE_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 static EFFECT_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(
-        r"(^SDR$|^HDR\d*$|^DOLBY$|^DOVI$|^DV$|^3D$|^REPACK$|^HLG$|^HDR10(\+|Plus)$|^HDR10P$|^VIVID$|^EDR$|^HQ$)",
+        r"(^SDR$|^HDR\d*$|^HDRVIVID$|^DOLBY$|^DOVI$|^DV$|^3D$|^REPACK$|^HLG$|^HDR10(\+|Plus)$|^HDR10P$|^VIVID$|^EDR$|^HQ$)",
     )
     .case_insensitive(true)
     .build()
@@ -209,7 +209,7 @@ static EFFECT_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 static RESOURCES_TYPE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(
-        r"(^BLURAY$|^HDTV$|^UHDTV$|^HDDVD$|^WEBRIP$|^DVDRIP$|^BDRIP$|^BLU$|^WEB$|^BD$|^HDRip$|^REMUX$|^UHD$)|(^SDR$|^HDR\d*$|^DOLBY$|^DOVI$|^DV$|^3D$|^REPACK$|^HLG$|^HDR10(\+|Plus)$|^HDR10P$|^VIVID$|^EDR$|^HQ$)",
+        r"(^BLURAY$|^HDTV$|^UHDTV$|^HDDVD$|^WEBRIP$|^DVDRIP$|^BDRIP$|^BLU$|^WEB$|^BD$|^HDRip$|^REMUX$|^UHD$)|(^SDR$|^HDR\d*$|^HDRVIVID$|^DOLBY$|^DOVI$|^DV$|^3D$|^REPACK$|^HLG$|^HDR10(\+|Plus)$|^HDR10P$|^VIVID$|^EDR$|^HQ$)",
     )
     .case_insensitive(true)
     .build()
