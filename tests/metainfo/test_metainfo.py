@@ -192,6 +192,49 @@ class MetaInfoPublicEntryTest(TestCase):
         self.assertEqual(_format_episode(parsed), "E04")
         self.assertEqual(parsed["apply_words"], custom_words)
 
+    def test_custom_words_episode_offset_supports_multiplication_expression(self):
+        """集数偏移表达式应支持乘法和连续运算。"""
+        custom_words = [
+            r"Ha.Ha.Ha.Ha.Ha.2026.S06E([0-1][0-9]).Part1 => 哈哈哈哈哈 (2020){[tmdbid=112732;type=tv]} S06E\1.Part1 && S06 <> .Part1 >> 2*EP-1"
+        ]
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "Ha.Ha.Ha.Ha.Ha.2026.S06E03.Part1",
+            None,
+            build_options(custom_words=custom_words),
+        )
+
+        self.assertEqual(parsed["cn_name"], "哈哈哈哈哈")
+        self.assertEqual(parsed["tmdbid"], 112732)
+        self.assertEqual(parsed["begin_season"], 6)
+        self.assertEqual(_format_episode(parsed), "E05")
+        self.assertEqual(parsed["apply_words"], custom_words)
+
+    def test_custom_words_episode_offset_supports_repeated_ep_expression(self):
+        """集数偏移表达式应支持重复使用 EP 占位符。"""
+        custom_words = ["旧名 => 新名 && 第 <> 集 >> EP+EP-1"]
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "旧名 第03集",
+            None,
+            build_options(custom_words=custom_words),
+        )
+
+        self.assertEqual(parsed["cn_name"], "新名")
+        self.assertEqual(_format_episode(parsed), "E05")
+        self.assertEqual(parsed["apply_words"], custom_words)
+
+    def test_custom_words_episode_offset_rejects_implicit_ep_expression(self):
+        """集数偏移表达式不应把 2EP 当作隐式乘法或字符串拼接。"""
+        custom_words = ["旧名 => 新名 && 第 <> 集 >> 2EP"]
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "旧名 第03集",
+            None,
+            build_options(custom_words=custom_words),
+        )
+
+        self.assertEqual(parsed["cn_name"], "新名")
+        self.assertEqual(_format_episode(parsed), "E03")
+        self.assertEqual(parsed["apply_words"], [])
+
     def test_custom_words_support_episode_group_parameter(self):
         """同步后端自定义识别词写入剧集组参数的用例。"""
         group_id = "5ad0ec240e0a26303f00d84d"

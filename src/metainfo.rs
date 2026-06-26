@@ -1061,13 +1061,7 @@ fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String
             return value.to_string();
         };
         replaced = true;
-        let replacement = if value.chars().any(is_chinese_char) {
-            i64_to_cn_number(offset_value)
-        } else if let Some(zeros) = LEADING_ZERO_RE.find(value) {
-            format!("{}{}", zeros.as_str(), offset_value)
-        } else {
-            offset_value.to_string()
-        };
+        let replacement = format_episode_offset(value, offset_value);
         replacement
     }) else {
         return (title.to_string(), false);
@@ -1122,20 +1116,169 @@ fn expand_python_replacement(cap: &Captures<'_>, replacement: &str) -> String {
     result
 }
 
-/// 计算 EP 偏移表达式，支持 EP+N、EP-N 和纯数字。
-fn eval_episode_offset(expr: &str, episode: i64) -> Option<i64> {
-    let expr = expr.replace("EP", &episode.to_string()).replace(' ', "");
-    if let Some((left, right)) = expr.split_once('+') {
-        return Some(left.parse::<i64>().ok()? + right.parse::<i64>().ok()?);
+/// 按原集数字符串格式返回偏移后的集数字符串。
+fn format_episode_offset(value: &str, offset_value: i64) -> String {
+    if value.chars().any(is_chinese_char) {
+        return i64_to_cn_number(offset_value);
     }
-    if let Some(index) = expr.rfind('-') {
-        if index > 0 {
-            let left = expr[..index].parse::<i64>().ok()?;
-            let right = expr[index + 1..].parse::<i64>().ok()?;
-            return Some(left - right);
+    if LEADING_ZERO_RE.find(value).is_none() {
+        return offset_value.to_string();
+    }
+    let width = value.len();
+    if offset_value < 0 {
+        return format!("-{:0width$}", offset_value.saturating_abs(), width = width);
+    }
+    format!("{:0width$}", offset_value, width = width)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EpisodeOffsetToken {
+    Number(i64),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    LeftParen,
+    RightParen,
+}
+
+/// 计算 EP 偏移表达式，支持数字、EP、括号和基础算术运算符。
+fn eval_episode_offset(expr: &str, episode: i64) -> Option<i64> {
+    let tokens = tokenize_episode_offset(expr, episode)?;
+    let mut parser = EpisodeOffsetParser {
+        tokens: &tokens,
+        index: 0,
+    };
+    let value = parser.parse_expression()?;
+    (parser.index == tokens.len()).then_some(value)
+}
+
+/// 将 EP 偏移表达式拆成可安全计算的 token。
+fn tokenize_episode_offset(expr: &str, episode: i64) -> Option<Vec<EpisodeOffsetToken>> {
+    let chars = expr.chars().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch.is_whitespace() {
+            index += 1;
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            let start = index;
+            index += 1;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+            let value = chars[start..index]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .ok()?;
+            tokens.push(EpisodeOffsetToken::Number(value));
+            continue;
+        }
+        if ch == 'E' && chars.get(index + 1) == Some(&'P') {
+            tokens.push(EpisodeOffsetToken::Number(episode));
+            index += 2;
+            continue;
+        }
+        let token = match ch {
+            '+' => EpisodeOffsetToken::Plus,
+            '-' => EpisodeOffsetToken::Minus,
+            '*' => EpisodeOffsetToken::Star,
+            '/' => EpisodeOffsetToken::Slash,
+            '%' => EpisodeOffsetToken::Percent,
+            '(' => EpisodeOffsetToken::LeftParen,
+            ')' => EpisodeOffsetToken::RightParen,
+            _ => return None,
+        };
+        tokens.push(token);
+        index += 1;
+    }
+    (!tokens.is_empty()).then_some(tokens)
+}
+
+struct EpisodeOffsetParser<'a> {
+    tokens: &'a [EpisodeOffsetToken],
+    index: usize,
+}
+
+impl EpisodeOffsetParser<'_> {
+    /// 解析加减表达式。
+    fn parse_expression(&mut self) -> Option<i64> {
+        let mut value = self.parse_term()?;
+        loop {
+            match self.peek() {
+                Some(EpisodeOffsetToken::Plus) => {
+                    self.index += 1;
+                    value = value.checked_add(self.parse_term()?)?;
+                }
+                Some(EpisodeOffsetToken::Minus) => {
+                    self.index += 1;
+                    value = value.checked_sub(self.parse_term()?)?;
+                }
+                _ => return Some(value),
+            }
         }
     }
-    expr.parse::<i64>().ok()
+
+    /// 解析乘除和取余表达式。
+    fn parse_term(&mut self) -> Option<i64> {
+        let mut value = self.parse_factor()?;
+        loop {
+            match self.peek() {
+                Some(EpisodeOffsetToken::Star) => {
+                    self.index += 1;
+                    value = value.checked_mul(self.parse_factor()?)?;
+                }
+                Some(EpisodeOffsetToken::Slash) => {
+                    self.index += 1;
+                    let right = self.parse_factor()?;
+                    if right == 0 {
+                        return None;
+                    }
+                    value = value.checked_div(right)?;
+                }
+                Some(EpisodeOffsetToken::Percent) => {
+                    self.index += 1;
+                    let right = self.parse_factor()?;
+                    if right == 0 {
+                        return None;
+                    }
+                    value = value.checked_rem(right)?;
+                }
+                _ => return Some(value),
+            }
+        }
+    }
+
+    /// 解析一元正负号和括号。
+    fn parse_factor(&mut self) -> Option<i64> {
+        match self.next()? {
+            EpisodeOffsetToken::Number(value) => Some(value),
+            EpisodeOffsetToken::Plus => self.parse_factor(),
+            EpisodeOffsetToken::Minus => self.parse_factor()?.checked_neg(),
+            EpisodeOffsetToken::LeftParen => {
+                let value = self.parse_expression()?;
+                (self.next() == Some(EpisodeOffsetToken::RightParen)).then_some(value)
+            }
+            _ => None,
+        }
+    }
+
+    /// 查看下一个 token。
+    fn peek(&self) -> Option<EpisodeOffsetToken> {
+        self.tokens.get(self.index).copied()
+    }
+
+    /// 消耗下一个 token。
+    fn next(&mut self) -> Option<EpisodeOffsetToken> {
+        let token = self.peek()?;
+        self.index += 1;
+        Some(token)
+    }
 }
 
 /// 解析普通影视标题。
