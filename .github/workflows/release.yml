@@ -3,13 +3,174 @@ name: Build and Publish
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - pyproject.toml
 
 permissions:
   contents: read
 
 jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      should_publish: ${{ steps.pipeline.outputs.should_publish }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version change
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python <<'PY'
+          import os
+          import subprocess
+          import sys
+          import tomllib
+          from pathlib import Path
+
+
+          def versions_from_text(cargo_text: str, pyproject_text: str) -> tuple[str, str]:
+              """Read package versions from the two project metadata files."""
+              cargo_version = tomllib.loads(cargo_text)["package"]["version"]
+              pyproject_version = tomllib.loads(pyproject_text)["project"]["version"]
+              return cargo_version, pyproject_version
+
+
+          def file_at_ref(ref: str, path: str) -> str | None:
+              """Return a tracked file at a git ref, or None when the ref/path is unavailable."""
+              if not ref or set(ref) == {"0"}:
+                  return None
+              try:
+                  return subprocess.check_output(
+                      ["git", "show", f"{ref}:{path}"],
+                      text=True,
+                      stderr=subprocess.DEVNULL,
+                  )
+              except subprocess.CalledProcessError:
+                  return None
+
+
+          def set_output(name: str, value: str) -> None:
+              """Append one GitHub Actions step output value."""
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output_file:
+                  print(f"{name}={value}", file=output_file)
+
+
+          cargo_text = Path("Cargo.toml").read_text(encoding="utf-8")
+          pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
+          cargo_version, pyproject_version = versions_from_text(cargo_text, pyproject_text)
+
+          if cargo_version != pyproject_version:
+              print(
+                  f"Cargo.toml version {cargo_version} does not match "
+                  f"pyproject.toml version {pyproject_version}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          event_name = os.environ["EVENT_NAME"]
+          release_tag = os.environ.get("RELEASE_TAG", "")
+          version = cargo_version
+          tag = f"v{version}"
+          changed = "false"
+
+          if event_name == "release":
+              tag = release_tag
+              version = release_tag.removeprefix("v")
+              if version != cargo_version:
+                  print(
+                      f"Release tag {release_tag} does not match package version {cargo_version}",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              changed = "true"
+          else:
+              previous_cargo_text = file_at_ref(os.environ.get("BEFORE_SHA", ""), "Cargo.toml")
+              previous_pyproject_text = file_at_ref(os.environ.get("BEFORE_SHA", ""), "pyproject.toml")
+              if previous_cargo_text is None or previous_pyproject_text is None:
+                  changed = "true"
+              else:
+                  previous_cargo_version, previous_pyproject_version = versions_from_text(
+                      previous_cargo_text,
+                      previous_pyproject_text,
+                  )
+                  changed = str(
+                      (previous_cargo_version, previous_pyproject_version)
+                      != (cargo_version, pyproject_version)
+                  ).lower()
+
+          set_output("changed", changed)
+          set_output("tag", tag)
+          set_output("version", version)
+          print(f"Resolved {tag}; version_changed={changed}")
+          PY
+
+      - name: Create GitHub release
+        id: auto_release
+        if: github.event_name == 'push' && steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" >/dev/null 2>&1 || true
+            release_sha="$(git rev-list -n 1 "${RELEASE_TAG}" 2>/dev/null || true)"
+            if [ "${release_sha}" != "${GITHUB_SHA}" ]; then
+              echo "Release ${RELEASE_TAG} already exists at ${release_sha:-unknown}, not ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${RELEASE_TAG} already exists on this commit; continue publish pipeline."
+            exit 0
+          fi
+
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" >/dev/null 2>&1 || true
+          existing_tag_sha="$(git rev-list -n 1 "${RELEASE_TAG}" 2>/dev/null || true)"
+          if [ -n "${existing_tag_sha}" ] && [ "${existing_tag_sha}" != "${GITHUB_SHA}" ]; then
+            echo "Tag ${RELEASE_TAG} already exists at ${existing_tag_sha}, not ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --target "${GITHUB_SHA}" \
+            --title "${RELEASE_TAG}" \
+            --notes "Automated release for moviepilot-rust ${RELEASE_VERSION}."
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Select release pipeline
+        id: pipeline
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.auto_release.outputs.publish }}" = "true" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: ${{ matrix.conf.os }}-${{ matrix.conf.target }}-${{ matrix.conf.manylinux || 'host' }}
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_publish == 'true'
     runs-on: ${{ matrix.conf.os }}
     strategy:
       fail-fast: false
@@ -111,7 +272,8 @@ jobs:
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare-release, build]
+    if: needs.prepare-release.outputs.should_publish == 'true'
     environment: pypi
     permissions:
       id-token: write
@@ -130,15 +292,9 @@ jobs:
   bump-moviepilot-requirements:
     name: Bump MoviePilot requirements.in
     runs-on: ubuntu-latest
-    needs: publish
+    needs: [prepare-release, publish]
+    if: needs.prepare-release.outputs.should_publish == 'true'
     steps:
-      - name: Resolve version
-        id: version
-        run: |
-          version="${{ github.event.release.tag_name }}"
-          version="${version#v}"
-          echo "value=${version}" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v6
         with:
           repository: jxxghp/MoviePilot
@@ -148,7 +304,7 @@ jobs:
       - name: Update moviepilot-rust pin
         id: bump
         run: |
-          target="moviepilot-rust~=${{ steps.version.outputs.value }}"
+          target="moviepilot-rust~=${{ needs.prepare-release.outputs.version }}"
           if grep -q "^${target}$" requirements.in; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Already pinned to ${target}"
@@ -166,12 +322,12 @@ jobs:
         if: steps.bump.outputs.changed == 'true'
         with:
           token: ${{ secrets.MOVIEPILOT_REPO_TOKEN }}
-          commit-message: "chore: bump moviepilot-rust to ${{ steps.version.outputs.value }}"
-          title: "chore: bump moviepilot-rust to ${{ steps.version.outputs.value }}"
+          commit-message: "chore: bump moviepilot-rust to ${{ needs.prepare-release.outputs.version }}"
+          title: "chore: bump moviepilot-rust to ${{ needs.prepare-release.outputs.version }}"
           body: |
-            Automated bump from [${{ github.repository }}](https://github.com/${{ github.repository }}) release ${{ github.event.release.tag_name }}.
+            Automated bump from [${{ github.repository }}](https://github.com/${{ github.repository }}) release ${{ needs.prepare-release.outputs.tag }}.
 
-            PyPI: https://pypi.org/project/moviepilot-rust/${{ steps.version.outputs.value }}/
-          branch: chore/bump-moviepilot-rust-${{ steps.version.outputs.value }}
+            PyPI: https://pypi.org/project/moviepilot-rust/${{ needs.prepare-release.outputs.version }}/
+          branch: chore/bump-moviepilot-rust-${{ needs.prepare-release.outputs.version }}
           base: v2
           delete-branch: true
