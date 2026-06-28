@@ -9,7 +9,7 @@ use fancy_regex::Regex as FancyRegex;
 use once_cell::sync::Lazy;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList, PyString};
+use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -37,6 +37,8 @@ enum Token {
 
 #[derive(Clone)]
 struct FilterGroup {
+    name: String,
+    rule_string: String,
     levels: Vec<String>,
 }
 
@@ -46,6 +48,7 @@ struct RuleMatcher {
 }
 
 struct TorrentSnapshot {
+    site_name: String,
     title: String,
     description: String,
     labels: Vec<String>,
@@ -54,6 +57,25 @@ struct TorrentSnapshot {
     seeders: i64,
     downloadvolumefactor: Option<f64>,
     pub_minutes: f64,
+}
+
+#[derive(Default)]
+struct FilterTrace {
+    messages: Vec<String>,
+}
+
+enum TraceEvent {
+    RuleMissing { rule_name: String },
+    TmdbMatched { rule_name: String },
+    IncludeMissing { includes: Vec<String> },
+    ExcludeMatched { exclude: String },
+    SizeMismatch { size_range: String },
+    SeedersMismatch { seeders: i64 },
+    DownloadFactorMismatch { download_factor: f64 },
+    PublishTimeBelow { min_minutes: f64 },
+    PublishTimeRangeMismatch { min_minutes: f64, max_minutes: f64 },
+    PriorityMatched { priority: i64 },
+    GroupMismatch { group_name: String },
 }
 
 struct MediaSnapshot {
@@ -71,17 +93,62 @@ pub(crate) fn filter_torrents_fast(
     mediainfo: Option<&Bound<'_, PyAny>>,
     metainfo_options: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<PyObject> {
+    let (results, _) = filter_torrents_inner(
+        py,
+        groups,
+        torrent_list,
+        rule_set,
+        mediainfo,
+        metainfo_options,
+        false,
+    )?;
+    Ok(results)
+}
+
+#[pyfunction]
+#[pyo3(signature = (groups, torrent_list, rule_set, mediainfo=None, metainfo_options=None))]
+pub(crate) fn filter_torrents_with_trace_fast(
+    py: Python<'_>,
+    groups: &Bound<'_, PyList>,
+    torrent_list: &Bound<'_, PyList>,
+    rule_set: &Bound<'_, PyDict>,
+    mediainfo: Option<&Bound<'_, PyAny>>,
+    metainfo_options: Option<&Bound<'_, PyDict>>,
+) -> PyResult<PyObject> {
+    let (results, traces) = filter_torrents_inner(
+        py,
+        groups,
+        torrent_list,
+        rule_set,
+        mediainfo,
+        metainfo_options,
+        true,
+    )?;
+    Ok(PyTuple::new(py, [results, traces.into()])?.into())
+}
+
+fn filter_torrents_inner(
+    py: Python<'_>,
+    groups: &Bound<'_, PyList>,
+    torrent_list: &Bound<'_, PyList>,
+    rule_set: &Bound<'_, PyDict>,
+    mediainfo: Option<&Bound<'_, PyAny>>,
+    metainfo_options: Option<&Bound<'_, PyDict>>,
+    collect_trace: bool,
+) -> PyResult<(PyObject, PyObject)> {
     let groups = parse_filter_groups(groups)?;
     if groups.is_empty() {
-        return Ok(PyList::empty(py).into());
+        return Ok((PyList::empty(py).into(), PyList::empty(py).into()));
     }
     let matcher = RuleMatcher::from_py(rule_set)?;
     let media = MediaSnapshot::from_py(mediainfo)?;
     let results = PyList::empty(py);
+    let traces = PyList::empty(py);
     let mut parsed_rule_cache: HashMap<String, RuleExpr> = HashMap::new();
     let mut episode_count_cache: HashMap<String, i64> = HashMap::new();
     for (index, torrent_obj) in torrent_list.iter().enumerate() {
         let torrent = TorrentSnapshot::from_py(&torrent_obj, &matcher.match_fields)?;
+        let mut trace = collect_trace.then(FilterTrace::default);
         if let Some(priority) = match_torrent(
             py,
             &torrent,
@@ -91,11 +158,17 @@ pub(crate) fn filter_torrents_fast(
             metainfo_options,
             &mut parsed_rule_cache,
             &mut episode_count_cache,
+            trace.as_mut(),
         )? {
             results.append((index, priority))?;
         }
+        if let Some(trace) = trace {
+            for message in trace.messages {
+                traces.append(message)?;
+            }
+        }
     }
-    Ok(results.into())
+    Ok((results.into(), traces.into()))
 }
 
 #[pyfunction]
@@ -307,6 +380,7 @@ fn parse_filter_groups(groups: &Bound<'_, PyList>) -> PyResult<Vec<FilterGroup>>
     let mut result = Vec::new();
     for item in groups.iter() {
         let dict = item.downcast::<PyDict>()?;
+        let name = get_optional_nonempty_string(dict, "name")?.unwrap_or_default();
         let rule_string = get_optional_nonempty_string(dict, "rule_string")?.unwrap_or_default();
         if rule_string.is_empty() {
             continue;
@@ -318,7 +392,11 @@ fn parse_filter_groups(groups: &Bound<'_, PyList>) -> PyResult<Vec<FilterGroup>>
             .map(str::to_string)
             .collect::<Vec<_>>();
         if !levels.is_empty() {
-            result.push(FilterGroup { levels });
+            result.push(FilterGroup {
+                name,
+                rule_string,
+                levels,
+            });
         }
     }
     Ok(result)
@@ -357,11 +435,13 @@ impl RuleMatcher {
 impl TorrentSnapshot {
     /// 从 Python TorrentInfo 对象抽取过滤所需字段。
     fn from_py(torrent: &Bound<'_, PyAny>, match_fields: &HashSet<String>) -> PyResult<Self> {
+        let site_name = object_optional_string(torrent, "site_name")?.unwrap_or_default();
         let title = object_optional_string(torrent, "title")?.unwrap_or_default();
         let description = object_optional_string(torrent, "description")?.unwrap_or_default();
         let labels = object_string_list(torrent, "labels")?;
         let fields = selected_object_fields(torrent, match_fields, &title, &description, &labels)?;
         Ok(Self {
+            site_name,
             title,
             description,
             labels,
@@ -394,6 +474,96 @@ impl TorrentSnapshot {
     /// 读取任意 TorrentInfo 字段的匹配文本列表。
     fn field_values(&self, field: &str) -> Option<&Vec<String>> {
         self.fields.get(field)
+    }
+}
+
+impl FilterTrace {
+    /// 记录与 Python 旧过滤路径一致的调试日志文本。
+    fn push(&mut self, torrent: &TorrentSnapshot, event: TraceEvent) {
+        let message = match event {
+            TraceEvent::RuleMissing { rule_name } => format!("规则 {rule_name} 不存在"),
+            TraceEvent::TmdbMatched { rule_name } => {
+                format!(
+                    "种子 {} - {} 符合 {} 的TMDB规则，匹配成功",
+                    torrent.site_name, torrent.title, rule_name
+                )
+            }
+            TraceEvent::IncludeMissing { includes } => {
+                format!(
+                    "种子 {} - {} 不包含任何项 {}",
+                    torrent.site_name,
+                    torrent.title,
+                    format_string_list(&includes)
+                )
+            }
+            TraceEvent::ExcludeMatched { exclude } => {
+                format!(
+                    "种子 {} - {} 包含 {}",
+                    torrent.site_name, torrent.title, exclude
+                )
+            }
+            TraceEvent::SizeMismatch { size_range } => {
+                format!(
+                    "种子 {} - {} 大小 {} 不在范围 {}MB",
+                    torrent.site_name,
+                    torrent.title,
+                    format_filesize(torrent.size),
+                    size_range
+                )
+            }
+            TraceEvent::SeedersMismatch { seeders } => {
+                format!(
+                    "种子 {} - {} 做种人数 {} 小于 {}",
+                    torrent.site_name, torrent.title, torrent.seeders, seeders
+                )
+            }
+            TraceEvent::DownloadFactorMismatch { download_factor } => {
+                format!(
+                    "种子 {} - {} FREE值 {} 不是 {}",
+                    torrent.site_name,
+                    torrent.title,
+                    format_optional_f64(torrent.downloadvolumefactor),
+                    format_f64(download_factor)
+                )
+            }
+            TraceEvent::PublishTimeBelow { min_minutes } => {
+                format!(
+                    "种子 {} - {} 发布时间 {} 小于 {}",
+                    torrent.site_name,
+                    torrent.title,
+                    format_f64(torrent.pub_minutes),
+                    format_f64(min_minutes)
+                )
+            }
+            TraceEvent::PublishTimeRangeMismatch {
+                min_minutes,
+                max_minutes,
+            } => {
+                format!(
+                    "种子 {} - {} 发布时间 {} 不在 {}-{} 时间区间",
+                    torrent.site_name,
+                    torrent.title,
+                    format_f64(torrent.pub_minutes),
+                    format_f64(min_minutes),
+                    format_f64(max_minutes)
+                )
+            }
+            TraceEvent::PriorityMatched { priority } => {
+                format!(
+                    "种子 {} - {} 优先级为 {}",
+                    torrent.site_name,
+                    torrent.title,
+                    100 - priority + 1
+                )
+            }
+            TraceEvent::GroupMismatch { group_name } => {
+                format!(
+                    "种子 {} - {} {} 不匹配 {} 过滤规则",
+                    torrent.site_name, torrent.title, torrent.description, group_name
+                )
+            }
+        };
+        self.messages.push(message);
     }
 }
 
@@ -487,6 +657,7 @@ fn match_torrent(
     metainfo_options: Option<&Bound<'_, PyDict>>,
     parsed_rule_cache: &mut HashMap<String, RuleExpr>,
     episode_count_cache: &mut HashMap<String, i64>,
+    mut trace: Option<&mut FilterTrace>,
 ) -> PyResult<Option<i64>> {
     let mut last_priority = None;
     for group in groups {
@@ -502,15 +673,29 @@ fn match_torrent(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                trace.as_deref_mut(),
             )? {
                 matched_priority = Some(priority);
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.push(torrent, TraceEvent::PriorityMatched { priority });
+                }
                 break;
             }
             priority -= 1;
         }
         match matched_priority {
             Some(priority) => last_priority = Some(priority),
-            None => return Ok(None),
+            None => {
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.push(
+                        torrent,
+                        TraceEvent::GroupMismatch {
+                            group_name: effective_group_name(group),
+                        },
+                    );
+                }
+                return Ok(None);
+            }
         }
     }
     Ok(last_priority)
@@ -542,6 +727,7 @@ fn match_group(
     media: &MediaSnapshot,
     metainfo_options: Option<&Bound<'_, PyDict>>,
     episode_count_cache: &mut HashMap<String, i64>,
+    mut trace: Option<&mut FilterTrace>,
 ) -> PyResult<bool> {
     match expr {
         RuleExpr::Name(name) => match_rule(
@@ -552,6 +738,7 @@ fn match_group(
             media,
             metainfo_options,
             episode_count_cache,
+            trace,
         ),
         RuleExpr::Not(inner) => Ok(!match_group(
             py,
@@ -561,6 +748,7 @@ fn match_group(
             media,
             metainfo_options,
             episode_count_cache,
+            trace,
         )?),
         RuleExpr::And(left, right) => {
             if !match_group(
@@ -571,6 +759,7 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                trace.as_deref_mut(),
             )? {
                 return Ok(false);
             }
@@ -582,6 +771,7 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                trace,
             )
         }
         RuleExpr::Or(left, right) => {
@@ -593,6 +783,7 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                trace.as_deref_mut(),
             )? {
                 return Ok(true);
             }
@@ -604,6 +795,7 @@ fn match_group(
                 media,
                 metainfo_options,
                 episode_count_cache,
+                trace,
             )
         }
     }
@@ -618,50 +810,88 @@ fn match_rule(
     media: &MediaSnapshot,
     metainfo_options: Option<&Bound<'_, PyDict>>,
     episode_count_cache: &mut HashMap<String, i64>,
+    mut trace: Option<&mut FilterTrace>,
 ) -> PyResult<bool> {
     let Some(rule) = matcher.get(py, rule_name) else {
+        if let Some(trace) = trace.as_mut() {
+            trace.push(
+                torrent,
+                TraceEvent::RuleMissing {
+                    rule_name: rule_name.to_string(),
+                },
+            );
+        }
         return Ok(false);
     };
     if match_tmdb_rule(&rule, media)? {
+        if let Some(trace) = trace.as_mut() {
+            trace.push(
+                torrent,
+                TraceEvent::TmdbMatched {
+                    rule_name: rule_name.to_string(),
+                },
+            );
+        }
         return Ok(true);
     }
     let content = rule_match_content(&rule, torrent)?;
     let includes = get_string_list(&rule, "include")?;
     if !includes.is_empty() {
         let mut included = false;
-        for pattern in includes {
-            if regex_search(&pattern, &content)? {
+        for pattern in &includes {
+            if regex_search(pattern, &content)? {
                 included = true;
                 break;
             }
         }
         if !included {
+            if let Some(trace) = trace.as_mut() {
+                trace.push(torrent, TraceEvent::IncludeMissing { includes });
+            }
             return Ok(false);
         }
     }
     let excludes = get_string_list(&rule, "exclude")?;
     for pattern in excludes {
         if regex_search(&pattern, &content)? {
+            if let Some(trace) = trace.as_mut() {
+                trace.push(torrent, TraceEvent::ExcludeMatched { exclude: pattern });
+            }
             return Ok(false);
         }
     }
     if let Some(size_range) = get_optional_nonempty_string(&rule, "size_range")? {
         if !match_size(torrent, &size_range, metainfo_options, episode_count_cache)? {
+            if let Some(trace) = trace.as_mut() {
+                trace.push(torrent, TraceEvent::SizeMismatch { size_range });
+            }
             return Ok(false);
         }
     }
     if let Some(seeders) = get_optional_i64(&rule, "seeders")? {
         if torrent.seeders < seeders {
+            if let Some(trace) = trace.as_mut() {
+                trace.push(torrent, TraceEvent::SeedersMismatch { seeders });
+            }
             return Ok(false);
         }
     }
     if let Some(download_factor) = get_optional_f64(&rule, "downloadvolumefactor")? {
         if torrent.downloadvolumefactor != Some(download_factor) {
+            if let Some(trace) = trace.as_mut() {
+                trace.push(
+                    torrent,
+                    TraceEvent::DownloadFactorMismatch { download_factor },
+                );
+            }
             return Ok(false);
         }
     }
     if let Some(publish_time) = get_optional_nonempty_string(&rule, "publish_time")? {
-        if !match_publish_time(torrent.pub_minutes, &publish_time)? {
+        if let Some(event) = match_publish_time_event(torrent.pub_minutes, &publish_time)? {
+            if let Some(trace) = trace.as_mut() {
+                trace.push(torrent, event);
+            }
             return Ok(false);
         }
     }
@@ -773,18 +1003,29 @@ fn parse_size_range(size_range: &str) -> PyResult<SizeRange> {
     Ok(SizeRange::Unknown)
 }
 
-/// 匹配发布时间分钟数范围。
-fn match_publish_time(pub_minutes: f64, publish_time: &str) -> PyResult<bool> {
+/// 返回发布时间规则不匹配原因，供调试日志复用。
+fn match_publish_time_event(pub_minutes: f64, publish_time: &str) -> PyResult<Option<TraceEvent>> {
     let values = publish_time
         .split('-')
         .map(|item| parse_f64(item, "发布时间规则"))
         .collect::<PyResult<Vec<_>>>()?;
     if values.len() == 1 {
-        Ok(pub_minutes >= values[0])
+        if pub_minutes < values[0] {
+            return Ok(Some(TraceEvent::PublishTimeBelow {
+                min_minutes: values[0],
+            }));
+        }
+        Ok(None)
     } else if values.len() >= 2 {
-        Ok(values[0] <= pub_minutes && pub_minutes <= values[1])
+        if !(values[0] <= pub_minutes && pub_minutes <= values[1]) {
+            return Ok(Some(TraceEvent::PublishTimeRangeMismatch {
+                min_minutes: values[0],
+                max_minutes: values[1],
+            }));
+        }
+        Ok(None)
     } else {
-        Ok(true)
+        Ok(None)
     }
 }
 
@@ -847,6 +1088,70 @@ fn production_country_values(value: &Bound<'_, PyAny>) -> PyResult<Vec<String>> 
         }
     }
     Ok(result)
+}
+
+/// 返回规则组日志展示名称，匹配 Python 旧路径的 name/rule_string 回退顺序。
+fn effective_group_name(group: &FilterGroup) -> String {
+    if group.name.is_empty() {
+        group.rule_string.clone()
+    } else {
+        group.name.clone()
+    }
+}
+
+/// 按 MoviePilot Python 侧 str_filesize 的主要格式输出大小。
+fn format_filesize(size: f64) -> String {
+    let units = [
+        (1024.0 - 1.0, "K"),
+        (1024.0_f64.powi(2) - 1.0, "M"),
+        (1024.0_f64.powi(3) - 1.0, "G"),
+        (1024.0_f64.powi(4) - 1.0, "T"),
+    ];
+    let index = units
+        .iter()
+        .position(|(threshold, _)| size <= *threshold)
+        .map(|index| index as isize - 1)
+        .unwrap_or(units.len() as isize - 1);
+    if index == -1 {
+        format!("{}B", format_f64(size))
+    } else {
+        let (base, unit) = units[index as usize];
+        format!("{}{}", format_f64(round_to(size / (base + 1.0), 2)), unit)
+    }
+}
+
+/// 格式化可选浮点值，保持 None 文本与 Python 日志一致。
+fn format_optional_f64(value: Option<f64>) -> String {
+    match value {
+        Some(value) => format_f64(value),
+        None => "None".to_string(),
+    }
+}
+
+/// 按 Python 字符串列表展示形式格式化规则项。
+fn format_string_list(values: &[String]) -> String {
+    let items = values
+        .iter()
+        .map(|value| format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")))
+        .collect::<Vec<_>>();
+    format!("[{}]", items.join(", "))
+}
+
+/// 格式化浮点数，去掉无意义的小数 0。
+fn format_f64(value: f64) -> String {
+    let rounded = round_to(value, 6);
+    if (rounded.fract()).abs() < f64::EPSILON {
+        format!("{}", rounded as i64)
+    } else {
+        let text = format!("{rounded:.6}");
+        text.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// 按指定小数位四舍五入。
+fn round_to(value: f64, digits: i32) -> f64 {
+    let factor = 10_f64.powi(digits);
+    (value * factor).round() / factor
 }
 
 /// 按规则 match 字段读取 TorrentInfo 属性，避免热路径遍历整个 __dict__。

@@ -63,6 +63,28 @@ class FilterPublicEntryTest(TestCase):
 
         self.assertEqual(result, [(0, 100), (1, 99)])
 
+    def test_filter_torrents_with_trace_reports_rule_details(self):
+        """Rust trace 入口应返回 Python 过滤路径可输出的规则明细。"""
+        groups = [{"name": "test", "rule_string": "HDR & !BLU > DV"}]
+        rule_set = {
+            "HDR": {"include": "HDR"},
+            "DV": {"include": "DOVI"},
+            "BLU": {"include": "BluRay"},
+        }
+        torrents = [
+            _torrent(site_name="Alpha", title="Movie HDR WEB-DL"),
+            _torrent(site_name="Beta", title="Movie DOVI"),
+            _torrent(site_name="Gamma", title="Movie HDR BluRay"),
+        ]
+
+        result, traces = moviepilot_rust.filter_torrents_with_trace_fast(groups, torrents, rule_set)
+
+        self.assertEqual(result, [(0, 100), (1, 99)])
+        self.assertIn("种子 Alpha - Movie HDR WEB-DL 优先级为 1", traces)
+        self.assertIn("种子 Beta - Movie DOVI 不包含任何项 ['HDR']", traces)
+        self.assertIn("种子 Gamma - Movie HDR BluRay 不包含任何项 ['DOVI']", traces)
+        self.assertIn("种子 Gamma - Movie HDR BluRay  不匹配 test 过滤规则", traces)
+
     def test_filter_torrents_keeps_lazy_priority_level_parsing(self):
         """同步后端命中高优先级后不解析低优先级坏规则的用例。"""
         result = moviepilot_rust.filter_torrents_fast(
