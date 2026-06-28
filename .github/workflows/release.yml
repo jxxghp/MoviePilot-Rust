@@ -1,8 +1,15 @@
 name: Build and Publish
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
+  push:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'
+      - 'pyproject.toml'
 
 permissions:
   contents: read
