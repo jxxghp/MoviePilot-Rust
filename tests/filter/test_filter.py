@@ -63,6 +63,30 @@ class FilterPublicEntryTest(TestCase):
 
         self.assertEqual(result, [(0, 100), (1, 99)])
 
+    def test_filter_torrents_cnsub_rule_ignores_trailing_file_size_unit(self):
+        """CNSUB 规则不应把标题末尾文件大小单位 GB 当成字幕标记。"""
+        groups = [{"name": "test", "rule_string": "CNSUB"}]
+        rule_set = {
+            "CNSUB": {
+                "include": [
+                    r"[中国國繁简](/|\s|\\|\|)?[繁简英粤]|[英简繁](/|\s|\\|\|)?[中繁简]"
+                    r"|繁體|简体|[中国國][字配]|国语|國語|中文|中字|简日|繁日|简繁|繁体"
+                    r"|([\s,.-\[])(chs|cht)(|[\s,.-\]])"
+                    r"|(?<![a-z0-9])(?<!\d\s)(gb|big5)(?![a-z0-9])"
+                ],
+                "exclude": [],
+            },
+        }
+        torrents = [
+            _torrent(title="Movie 2026 1080p WEB-DL H264 AAC 39.23 GB"),
+            _torrent(title="Movie 2026 1080p WEB-DL H264 AAC [GB]"),
+            _torrent(title="Movie 2026 1080p WEB-DL H264 AAC [BIG5]"),
+        ]
+
+        result = moviepilot_rust.filter_torrents_fast(groups, torrents, rule_set)
+
+        self.assertEqual(result, [(1, 100), (2, 100)])
+
     def test_filter_torrents_with_trace_reports_rule_details(self):
         """Rust trace 入口应返回 Python 过滤路径可输出的规则明细。"""
         groups = [{"name": "test", "rule_string": "HDR & !BLU > DV"}]
