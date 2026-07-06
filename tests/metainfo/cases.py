@@ -33,6 +33,23 @@ meta_cases = [{
         "fps": 60
     }
 }, {
+    "title": "xXx 2002 1080p AMZN WEB-DL H.264 DDP 5.1-FROGWeb",
+    "subtitle": "",
+    "target": {
+        "type": "未知",
+        "cn_name": "",
+        "en_name": "Xxx",
+        "year": "2002",
+        "part": "",
+        "season": "",
+        "episode": "",
+        "restype": "WEB-DL",
+        "pix": "1080p",
+        "video_codec": "H264",
+        "audio_codec": "DDP 5.1",
+        "fps": None
+    }
+}, {
     "title": "【爪爪字幕组】★7月新番[欢迎来到实力至上主义的教室 第二季/Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e S2][11][1080p][HEVC][GB][MP4][招募翻译校对]",
     "subtitle": "",
     "target": {

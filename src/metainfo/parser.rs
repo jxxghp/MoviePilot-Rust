@@ -1561,9 +1561,8 @@ fn init_subtitle(meta: &mut MetaResult, title_text: &str) {
 /// 规范化普通影视名称。
 fn fix_video_name(meta: &mut MetaResult, name: Option<String>) -> Option<String> {
     let name = name?;
-    let name = SPACE_RE
-        .replace_all(NAME_NOSTRING_PATTERN.replace_all(&name, "").trim(), " ")
-        .to_string();
+    let name = NAME_NOSTRING_PATTERN.replace_all(&name, "");
+    let name = SPACE_RE.replace_all(name.trim(), " ").to_string();
     if name.is_empty() {
         return None;
     }
@@ -2417,5 +2416,23 @@ mod tests {
         assert_eq!(parsed.year.as_deref(), Some("2026"));
         assert_eq!(parsed.resource_pix.as_deref(), Some("2160p"));
         assert_eq!(parsed.resource_effect.as_deref(), Some("HDRVivid"));
+    }
+
+    /// 混合大小写片名 xXx 不能被干扰词规则清空。
+    #[test]
+    fn preserves_mixed_case_xxx_movie_title() {
+        let options = ParseOptions::empty();
+        let parsed = build_meta_info(
+            "xXx 2002 1080p AMZN WEB-DL H.264 DDP 5.1-FROGWeb",
+            None,
+            &options,
+            true,
+        );
+
+        assert_eq!(parsed.en_name.as_deref(), Some("Xxx"));
+        assert_eq!(parsed.year.as_deref(), Some("2002"));
+        assert_eq!(parsed.resource_pix.as_deref(), Some("1080p"));
+        assert_eq!(parsed.resource_type.as_deref(), Some("WEB-DL"));
+        assert_eq!(parsed.audio_encode.as_deref(), Some("DDP 5.1"));
     }
 }
