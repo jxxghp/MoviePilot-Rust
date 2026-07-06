@@ -1,8 +1,9 @@
+mod bindings;
 mod filter;
 mod indexer;
 mod metainfo;
 mod rss;
-mod utils;
+mod support;
 
 use pyo3::prelude::*;
 
@@ -16,17 +17,32 @@ fn is_available() -> bool {
 #[pymodule]
 fn moviepilot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_available, m)?)?;
-    m.add_function(wrap_pyfunction!(filter::parse_filter_rule_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(filter::filter_torrents_fast, m)?)?;
     m.add_function(wrap_pyfunction!(
-        filter::filter_torrents_with_trace_fast,
+        bindings::filter::parse_filter_rule_fast,
         m
     )?)?;
-    m.add_function(wrap_pyfunction!(indexer::parse_indexer_torrents_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(indexer::parse_indexer_subtitles_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(metainfo::parse_metainfo_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(metainfo::parse_metainfo_path_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(metainfo::find_metainfo_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(rss::parse_rss_items_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::filter::filter_torrents_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::filter::filter_torrents_with_trace_fast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::indexer::parse_indexer_torrents_fast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::indexer::parse_indexer_subtitles_fast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::metainfo::parse_metainfo_fast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::metainfo::parse_metainfo_path_fast,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(bindings::metainfo::find_metainfo_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::rss::parse_rss_items_fast, m)?)?;
     Ok(())
 }

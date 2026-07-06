@@ -82,8 +82,7 @@ pub(crate) fn get_config_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyR
     }
     if let Ok(text) = value.extract::<String>() {
         return Ok(text
-            .replace('\n', ";")
-            .replace('|', ";")
+            .replace(['\n', '|'], ";")
             .split(';')
             .filter_map(|item| {
                 let item = item.trim();

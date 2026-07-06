@@ -7,6 +7,21 @@ MoviePilot Rust 加速模块。
 - 支持版本：Python 3.11+
 - 构建工具：PyO3 + maturin
 
+## 项目结构
+
+```text
+src/
+├── bindings/   # Python API、输入快照和输出对象转换
+├── filter/     # 类型化过滤规则、表达式 AST 和执行引擎
+├── indexer/    # Indexer 配置模型、HTML 选择器和字段解析
+├── metainfo/   # 元信息模型、配置、正则规则和影视标题解析
+├── rss/        # RSS/Atom 数据模型和流式解析器
+└── support/    # 与业务无关的有界缓存等基础设施
+```
+
+业务模块只接收和返回纯 Rust 类型，不直接持有 Python 对象。`bindings` 负责 PyO3
+边界转换，因此核心解析器可以独立单测，并可在转换完成后释放 Python GIL。
+
 ## 本地开发安装
 
 在本仓库根目录创建 `.venv`，并把 Rust 扩展直接安装到这个虚拟环境：
@@ -24,6 +39,18 @@ python3 -m venv .venv
 ```
 
 输出 `True` 表示本地编译安装成功。
+
+## 本地检查
+
+优先使用项目目录下的 `.venv`，一次编译后运行 Rust 和 Python 两层测试：
+
+```shell
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+.venv/bin/python -m maturin develop
+cargo test --lib
+.venv/bin/python -m pytest -q
+```
 
 ## 本地打包
 
