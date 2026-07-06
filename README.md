@@ -97,11 +97,11 @@ dist/moviepilot_rust-x.x.x.tar.gz
 
 ## 发布
 
-在 GitHub 上 **Publish Release** 会触发 Actions，自动构建 Linux（glibc/musl）、macOS、Windows wheel 并发布到 PyPI；发布成功后还会向 [MoviePilot](https://github.com/jxxghp/MoviePilot) 的 `v2` 分支提交 bump `requirements.in` 的 PR（需配置 `MOVIEPILOT_REPO_TOKEN`）。
+更新 `Cargo.toml` 中的 package version 并推送到 `main` 后，GitHub Actions 会自动创建对应的 `v版本号` Release，构建 Linux（glibc/musl）、macOS、Windows wheel 并发布到 PyPI；发布成功后还会向 [MoviePilot](https://github.com/jxxghp/MoviePilot) 的 `v2` 分支提交 bump `requirements.in` 的 PR（需配置 `MOVIEPILOT_REPO_TOKEN`）。
 
 ```shell
-git tag vx.x.x
-git push origin vx.x.x
+# 修改 Cargo.toml 中的 version = "x.x.x"
+git push origin main
 ```
 
-然后在 GitHub 仓库 **Releases → Draft a new release** 中选择上述 tag 并点击 **Publish release**。仅推送 tag 不会触发构建。
+手动在 GitHub 上 **Publish Release** 仍会触发同一套发布流程，但 Release tag 必须与 `Cargo.toml` 中的 package version 一致，例如 `v0.2.1`。

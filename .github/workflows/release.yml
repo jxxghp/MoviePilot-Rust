@@ -9,15 +9,110 @@ on:
       - main
     paths:
       - 'Cargo.toml'
-      - 'pyproject.toml'
 
 permissions:
   contents: read
 
 jobs:
+  prepare:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.context.outputs.should_publish }}
+      version: ${{ steps.context.outputs.version }}
+      tag: ${{ steps.context.outputs.tag }}
+      target_sha: ${{ steps.context.outputs.target_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release context
+        id: context
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ -z "${version}" ]; then
+            echo "Unable to resolve Cargo package version" >&2
+            exit 1
+          fi
+
+          tag="v${version}"
+          target_sha="${CURRENT_SHA}"
+          should_publish="true"
+
+          if [ "${EVENT_NAME}" = "release" ]; then
+            tag="${RELEASE_TAG}"
+            if [ -z "${tag}" ]; then
+              echo "Unable to resolve release tag" >&2
+              exit 1
+            fi
+            if [ "${tag}" != "v${version}" ]; then
+              echo "Release tag ${tag} does not match Cargo package version v${version}" >&2
+              exit 1
+            fi
+          elif [ "${EVENT_NAME}" = "push" ]; then
+            should_publish="false"
+            if [ -z "${BEFORE_SHA}" ] || printf '%s' "${BEFORE_SHA}" | grep -q '^0\+$'; then
+              echo "Unable to compare Cargo package version for this push; skipping automatic release."
+            else
+              previous_version="$(git show "${BEFORE_SHA}:Cargo.toml" | sed -n 's/^version = "\([^"]*\)"/\1/p' | head -n 1 || true)"
+              if [ -z "${previous_version}" ]; then
+                echo "Unable to resolve previous Cargo package version" >&2
+                exit 1
+              fi
+
+              if [ "${previous_version}" = "${version}" ]; then
+                echo "Cargo package version is unchanged (${version}); skipping automatic release."
+              elif git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+                echo "Tag ${tag} already exists; skipping automatic release."
+              else
+                echo "Cargo package version changed from ${previous_version} to ${version}; publishing ${tag}."
+                should_publish="true"
+              fi
+            fi
+          fi
+
+          echo "should_publish=${should_publish}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
+
+  auto-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: github.event_name == 'push' && needs.prepare.outputs.should_publish == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          gh release create "${TAG_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${TARGET_SHA}" \
+            --title "${TAG_NAME}" \
+            --generate-notes
+
   build:
     name: ${{ matrix.conf.os }}-${{ matrix.conf.target }}-${{ matrix.conf.manylinux || 'host' }}
     runs-on: ${{ matrix.conf.os }}
+    needs:
+      - prepare
+      - auto-release
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_publish == 'true' &&
+      (needs.auto-release.result == 'success' || needs.auto-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -137,22 +232,10 @@ jobs:
   bump-moviepilot-requirements:
     name: Bump MoviePilot requirements.in
     runs-on: ubuntu-latest
-    needs: publish
+    needs:
+      - prepare
+      - publish
     steps:
-      - uses: actions/checkout@v6
-        with:
-          path: rust-source
-
-      - name: Resolve version
-        id: version
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust-source/Cargo.toml | head -n 1)"
-          if [ -z "${version}" ]; then
-            echo "Unable to resolve Cargo package version" >&2
-            exit 1
-          fi
-          echo "value=${version}" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v6
         with:
           repository: jxxghp/MoviePilot
@@ -164,7 +247,7 @@ jobs:
         id: bump
         working-directory: moviepilot
         run: |
-          target="moviepilot-rust~=${{ steps.version.outputs.value }}"
+          target="moviepilot-rust~=${{ needs.prepare.outputs.version }}"
           if grep -q "^${target}$" requirements.in; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Already pinned to ${target}"
@@ -183,12 +266,12 @@ jobs:
         with:
           path: moviepilot
           token: ${{ secrets.MOVIEPILOT_REPO_TOKEN }}
-          commit-message: "chore: bump moviepilot-rust to ${{ steps.version.outputs.value }}"
-          title: "chore: bump moviepilot-rust to ${{ steps.version.outputs.value }}"
+          commit-message: "chore: bump moviepilot-rust to ${{ needs.prepare.outputs.version }}"
+          title: "chore: bump moviepilot-rust to ${{ needs.prepare.outputs.version }}"
           body: |
-            Automated bump from [${{ github.repository }}](https://github.com/${{ github.repository }}) release ${{ github.event.release.tag_name }}.
+            Automated bump from [${{ github.repository }}](https://github.com/${{ github.repository }}) release ${{ needs.prepare.outputs.tag }}.
 
-            PyPI: https://pypi.org/project/moviepilot-rust/${{ steps.version.outputs.value }}/
-          branch: chore/bump-moviepilot-rust-${{ steps.version.outputs.value }}
+            PyPI: https://pypi.org/project/moviepilot-rust/${{ needs.prepare.outputs.version }}/
+          branch: chore/bump-moviepilot-rust-${{ needs.prepare.outputs.version }}
           base: v2
           delete-branch: true
