@@ -1554,7 +1554,40 @@ fn init_subtitle(meta: &mut MetaResult, title_text: &str) {
                     meta.subtitle_flag = true;
                 }
             }
+            return;
         }
+        init_episode_range_fin(meta, &title_text);
+    } else {
+        init_episode_range_fin(meta, &title_text);
+    }
+}
+
+/// 识别 01-26Fin、01-24 END、01-12完结 等数字范围完结标记。
+fn init_episode_range_fin(meta: &mut MetaResult, title_text: &str) {
+    let Some(cap) = SUBTITLE_EPISODE_RANGE_FIN_RE.captures(title_text) else {
+        return;
+    };
+    let begin = cap
+        .get(1)
+        .and_then(|item| item.as_str().parse::<i64>().ok());
+    let end = cap
+        .get(2)
+        .and_then(|item| item.as_str().parse::<i64>().ok());
+    let (Some(begin), Some(end)) = (begin, end) else {
+        return;
+    };
+    if begin < 1 || begin > end || end >= 10000 {
+        return;
+    }
+    if begin >= 1900 && end <= 2155 {
+        return;
+    }
+    if meta.begin_episode.is_none() {
+        meta.begin_episode = Some(begin);
+        meta.end_episode = Some(end);
+        meta.total_episode = end;
+        meta.media_type = MEDIA_TYPE_TV.to_string();
+        meta.subtitle_flag = true;
     }
 }
 
@@ -2434,5 +2467,51 @@ mod tests {
         assert_eq!(parsed.resource_pix.as_deref(), Some("1080p"));
         assert_eq!(parsed.resource_type.as_deref(), Some("WEB-DL"));
         assert_eq!(parsed.audio_encode.as_deref(), Some("DDP 5.1"));
+    }
+
+    /// 数字范围完结标记应写入起止集和最终总集数。
+    #[test]
+    fn parses_finished_episode_range_from_subtitle() {
+        let options = ParseOptions::empty();
+        for (subtitle, begin, end) in [
+            ("Some Show [01-01Fin]", 1, 1),
+            ("Some Show 13-24 END", 13, 24),
+            ("某剧 01-12完结", 1, 12),
+        ] {
+            let parsed = build_meta_info(
+                "Some Show S01 2022 1080p WEB-DL H264-GRP",
+                Some(subtitle),
+                &options,
+                true,
+            );
+
+            assert_eq!(parsed.begin_episode, Some(begin));
+            assert_eq!(parsed.end_episode, Some(end));
+            assert_eq!(parsed.total_episode, end);
+            assert_eq!(parsed.media_type, "电视剧");
+        }
+    }
+
+    /// 数字后缀、年份范围和不完整中文标记不得被截断识别为集数。
+    #[test]
+    fn rejects_invalid_finished_episode_ranges() {
+        let options = ParseOptions::empty();
+        for subtitle in [
+            "Some Show [01-26Fin]2",
+            "Some Show 01-26Fin 2",
+            "Some Show 01-24完美版",
+            "Some Show [2019-2020Fin]",
+            "Some Show 10001-26Fin",
+        ] {
+            let parsed = build_meta_info(
+                "Some Show S01 2022 1080p WEB-DL H264-GRP",
+                Some(subtitle),
+                &options,
+                true,
+            );
+
+            assert_eq!(parsed.begin_episode, None, "subtitle: {subtitle}");
+            assert_eq!(parsed.total_episode, 0, "subtitle: {subtitle}");
+        }
     }
 }

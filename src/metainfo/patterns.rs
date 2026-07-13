@@ -245,6 +245,14 @@ pub(super) static SUBTITLE_EPISODE_ALL_RE: Lazy<Regex> = Lazy::new(|| {
         .build()
         .unwrap()
 });
+pub(super) static SUBTITLE_EPISODE_RANGE_FIN_RE: Lazy<Regex> = Lazy::new(|| {
+    RegexBuilder::new(
+        r"(?<!\d)\[?\s*(\d{1,4})\s*-\s*(\d{1,4})\s*(?:(?:Fin|End)(?![a-z0-9])|完结(?![\u{4e00}-\u{9fff}]))(?:\s*\](?!\d)|(?!\s*(?:\]\d|\d))\s*)",
+    )
+    .case_insensitive(true)
+    .build()
+    .unwrap()
+});
 pub(super) static DESCRIPTION_SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\s/|]+").unwrap());
 pub(super) static ANIME_NAME_NOSTRING_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"S\d{2}\s*-\s*S\d{2}|S\d{2}|\s+S\d{1,2}|EP?\d{2,4}\s*-\s*EP?\d{2,4}|EP?\d{2,4}|\s+EP?\d{1,4}|\s+GB").case_insensitive(true).build().unwrap()
