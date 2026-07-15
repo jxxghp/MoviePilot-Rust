@@ -2393,7 +2393,7 @@ pub(super) fn build_release_group_regex(groups: &str) -> Option<Regex> {
     if groups.is_empty() {
         return None;
     }
-    let pattern = format!(r"(?i)(^|[-@\[￡【&])((?:{}))($|[@.\s\]\[】&])", groups);
+    let pattern = format!(r"(?i)([-@\[￡【&])((?:{}))($|[@.\s\]\[】&])", groups);
     Regex::new(&pattern).ok()
 }
 
@@ -2432,7 +2432,7 @@ fn match_customization(title: &str, regex: Option<&Regex>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::build_meta_info;
+    use super::{build_meta_info, build_release_group_regex, match_release_group};
     use crate::metainfo::ParseOptions;
 
     /// 验证核心解析器无需 Python 运行时即可识别基础影视字段。
@@ -2467,6 +2467,29 @@ mod tests {
         assert_eq!(parsed.resource_pix.as_deref(), Some("1080p"));
         assert_eq!(parsed.resource_type.as_deref(), Some("WEB-DL"));
         assert_eq!(parsed.audio_encode.as_deref(), Some("DDP 5.1"));
+    }
+
+    /// 发布组只能在约定的分隔符后识别，标题首词不得参与发布组拼接。
+    #[test]
+    fn release_group_requires_leading_separator() {
+        let regex = build_release_group_regex(r"D(?:ream|BTV)|AD(?:Audio|E(?:book|)|Music|Web)")
+            .expect("release group regex");
+
+        for title in [
+            "Dream.to.You.S01.2026.1080p.friDay.WEB-DL.H264.AAC-ADWeb",
+            "Dream to You S01E02 2026 1080p friDay WEB-DL H264 AAC-DramaS@ADWeb",
+        ] {
+            assert_eq!(
+                match_release_group(title, Some(&regex)).as_deref(),
+                Some("ADWeb"),
+                "title: {title}"
+            );
+        }
+
+        assert_eq!(
+            match_release_group("Example-Dream@ADWeb", Some(&regex)).as_deref(),
+            Some("Dream@ADWeb")
+        );
     }
 
     /// 数字范围完结标记应写入起止集和最终总集数。

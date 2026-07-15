@@ -92,6 +92,17 @@ class MetaInfoPublicEntryTest(TestCase):
                     case["target"],
                 )
 
+    def test_release_group_requires_leading_separator(self):
+        """标题首词即使命中组名规则，也不能与真实发布组拼接。"""
+        titles = [
+            "Dream.to.You.S01.2026.1080p.friDay.WEB-DL.H264.AAC-ADWeb",
+            "Dream to You S01E02 2026 1080p friDay WEB-DL H264 AAC-DramaS@ADWeb",
+        ]
+        for title in titles:
+            with self.subTest(title=title):
+                parsed = moviepilot_rust.parse_metainfo_fast(title, "", build_options())
+                self.assertEqual(parsed["resource_team"], "ADWeb")
+
     def test_emby_format_ids(self):
         """同步后端 Emby 格式 tmdbid 路径识别用例。"""
         test_paths = [
