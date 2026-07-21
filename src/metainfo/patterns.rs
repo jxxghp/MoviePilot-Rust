@@ -33,6 +33,10 @@ pub(super) static BRACED_TMDBID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=tmdbid=)(\d+)").unwrap());
 pub(super) static BRACED_DOUBANID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=doubanid=)(\d+)").unwrap());
+pub(super) static BRACED_BANGUMIID_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<=bangumiid=)(\d+)").unwrap());
+pub(super) static BRACED_ANILISTID_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<=anilistid=)(\d+)").unwrap());
 pub(super) static BRACED_TYPE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=type=)(\w+)").unwrap());
 pub(super) static BRACED_EPISODE_GROUP_RE: Lazy<Regex> =
@@ -51,6 +55,22 @@ pub(super) static EMBY_TMDB_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"\[tmdb[=\-](\d+)\]").unwrap(),
         Regex::new(r"\{tmdbid[=\-](\d+)\}").unwrap(),
         Regex::new(r"\{tmdb[=\-](\d+)\}").unwrap(),
+    ]
+});
+pub(super) static BANGUMI_ID_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        Regex::new(r"\[bangumiid[=\-](\d+)\]").unwrap(),
+        Regex::new(r"\[bangumi[=\-](\d+)\]").unwrap(),
+        Regex::new(r"\{bangumiid[=\-](\d+)\}").unwrap(),
+        Regex::new(r"\{bangumi[=\-](\d+)\}").unwrap(),
+    ]
+});
+pub(super) static ANILIST_ID_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        Regex::new(r"\[anilistid[=\-](\d+)\]").unwrap(),
+        Regex::new(r"\[anilist[=\-](\d+)\]").unwrap(),
+        Regex::new(r"\{anilistid[=\-](\d+)\}").unwrap(),
+        Regex::new(r"\{anilist[=\-](\d+)\}").unwrap(),
     ]
 });
 pub(super) static SEASON_FULL_RE: Lazy<Regex> = Lazy::new(|| {

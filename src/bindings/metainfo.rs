@@ -45,6 +45,10 @@ pub(crate) fn find_metainfo_fast(py: Python<'_>, title: &str) -> PyResult<PyObje
     let meta = PyDict::new(py);
     meta.set_item("tmdbid", parsed.tmdbid)?;
     meta.set_item("doubanid", parsed.doubanid)?;
+    meta.set_item("bangumiid", parsed.bangumiid)?;
+    meta.set_item("anilistid", parsed.anilistid)?;
+    meta.set_item("media_source", parsed.media_source)?;
+    meta.set_item("media_id", parsed.media_id)?;
     meta.set_item("type", parsed.media_type)?;
     meta.set_item("episode_group", parsed.episode_group)?;
     meta.set_item("begin_season", parsed.begin_season)?;
@@ -167,6 +171,8 @@ fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<PyObject> {
     dict.set_item("apply_words", &meta.apply_words)?;
     dict.set_item("tmdbid", meta.tmdbid)?;
     dict.set_item("doubanid", &meta.doubanid)?;
+    dict.set_item("media_source", &meta.media_source)?;
+    dict.set_item("media_id", &meta.media_id)?;
     dict.set_item("episode_group", &meta.episode_group)?;
     dict.set_item("fps", meta.fps)?;
     Ok(dict.into())

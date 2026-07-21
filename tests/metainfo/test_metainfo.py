@@ -293,6 +293,65 @@ class MetaInfoPublicEntryTest(TestCase):
         )
         self.assertIsNone(parsed["metainfo"]["episode_group"])
 
+    def test_find_metainfo_supports_anime_source_ids(self):
+        """显式媒体标签应提取Bangumi与AniList来源ID并移除原标签。"""
+        cases = [
+            (
+                "葬送的芙莉莲 {[bangumiid=400602;type=tv;s=1]}",
+                "bangumi",
+                "400602",
+                "bangumiid",
+            ),
+            (
+                "Frieren {[anilistid=154587;type=tv;s=1]}",
+                "anilist",
+                "154587",
+                "anilistid",
+            ),
+        ]
+        for title, source, media_id, source_key in cases:
+            with self.subTest(source=source):
+                parsed = moviepilot_rust.find_metainfo_fast(title)
+                self.assertEqual(parsed["metainfo"]["media_source"], source)
+                self.assertEqual(parsed["metainfo"]["media_id"], media_id)
+                self.assertEqual(parsed["metainfo"][source_key], media_id)
+                self.assertNotIn(f"{source}id=", parsed["title"])
+
+    def test_parse_metainfo_supports_anilist_id_alias(self):
+        """AniList方括号别名应进入公开MetaInfo结果。"""
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "Frieren [anilist=154587] S01E01",
+            None,
+            build_options(),
+        )
+        self.assertEqual(parsed["media_source"], "anilist")
+        self.assertEqual(parsed["media_id"], "154587")
+        self.assertEqual(parsed["begin_season"], 1)
+        self.assertEqual(parsed["begin_episode"], 1)
+
+    def test_parse_metainfo_path_inherits_bangumi_id(self):
+        """父目录Bangumi ID应合并到文件路径识别结果。"""
+        parsed = moviepilot_rust.parse_metainfo_path_fast(
+            "/anime/葬送的芙莉莲 [bangumi=400602]/Frieren.S01E01.mkv",
+            build_options(),
+        )
+        self.assertEqual(parsed["media_source"], "bangumi")
+        self.assertEqual(parsed["media_id"], "400602")
+
+    def test_custom_words_support_anilist_id(self):
+        """自定义识别词替换结果中的AniList ID应被Rust快路径识别。"""
+        custom_words = [
+            "Sousou no Frieren => Frieren {[anilistid=154587;type=tv;s=1]}"
+        ]
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "Sousou no Frieren 01",
+            None,
+            build_options(custom_words=custom_words),
+        )
+        self.assertEqual(parsed["media_source"], "anilist")
+        self.assertEqual(parsed["media_id"], "154587")
+        self.assertEqual(parsed["apply_words"], custom_words)
+
     def test_video_bit_extracted_for_video_title(self):
         """同步后端普通影视标题视频位深识别用例。"""
         parsed = moviepilot_rust.parse_metainfo_fast(

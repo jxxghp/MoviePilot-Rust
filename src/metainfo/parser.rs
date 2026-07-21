@@ -117,13 +117,17 @@ fn is_anime(name: &str) -> bool {
     ANIME_SQUARE_BRACKET_RE.is_match(name)
 }
 
-/// 提取显式 tmdbid/type/s/e 等媒体标签。
+/// 提取显式媒体数据源ID、type、s/e等媒体标签。
 pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
     let mut parsed_title = title.to_string();
     let mut info = ExplicitMetaInfo {
         title: parsed_title.clone(),
         tmdbid: None,
         doubanid: None,
+        bangumiid: None,
+        anilistid: None,
+        media_source: None,
+        media_id: None,
         media_type: None,
         episode_group: None,
         begin_season: None,
@@ -143,6 +147,12 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             .captures(&result)
             .and_then(|cap| cap.get(1));
         let doubanid = BRACED_DOUBANID_RE
+            .captures(&result)
+            .and_then(|cap| cap.get(1));
+        let bangumiid = BRACED_BANGUMIID_RE
+            .captures(&result)
+            .and_then(|cap| cap.get(1));
+        let anilistid = BRACED_ANILISTID_RE
             .captures(&result)
             .and_then(|cap| cap.get(1));
         let mtype = BRACED_TYPE_RE.captures(&result).and_then(|cap| cap.get(1));
@@ -167,6 +177,12 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
         if let Some(value) = doubanid {
             info.doubanid = Some(value.as_str().to_string());
         }
+        if let Some(value) = bangumiid {
+            info.bangumiid = Some(value.as_str().to_string());
+        }
+        if let Some(value) = anilistid {
+            info.anilistid = Some(value.as_str().to_string());
+        }
         if let Some(value) = mtype {
             match value.as_str() {
                 "movie" | "movies" => info.media_type = Some(MEDIA_TYPE_MOVIE.to_string()),
@@ -190,6 +206,9 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             info.end_episode = value.as_str().parse::<i64>().ok();
         }
         if tmdbid.is_some()
+            || doubanid.is_some()
+            || bangumiid.is_some()
+            || anilistid.is_some()
             || mtype.is_some()
             || episode_group.is_some()
             || begin_season.is_some()
@@ -200,6 +219,17 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             parsed_title = parsed_title.replace(&format!("{{[{result}]}}"), "");
         }
     }
+
+    info.bangumiid = remove_explicit_media_id(
+        &mut parsed_title,
+        info.bangumiid,
+        BANGUMI_ID_RE_LIST.as_slice(),
+    );
+    info.anilistid = remove_explicit_media_id(
+        &mut parsed_title,
+        info.anilistid,
+        ANILIST_ID_RE_LIST.as_slice(),
+    );
 
     if let Some(cap) = EMBY_TMDB_RE_LIST[0].captures(&parsed_title) {
         info.tmdbid = cap.get(1).map(|item| item.as_str().to_string());
@@ -217,6 +247,20 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
         }
     }
 
+    if let Some(value) = info.tmdbid.as_ref() {
+        info.media_source = Some("themoviedb".to_string());
+        info.media_id = Some(value.clone());
+    } else if let Some(value) = info.doubanid.as_ref() {
+        info.media_source = Some("douban".to_string());
+        info.media_id = Some(value.clone());
+    } else if let Some(value) = info.bangumiid.as_ref() {
+        info.media_source = Some("bangumi".to_string());
+        info.media_id = Some(value.clone());
+    } else if let Some(value) = info.anilistid.as_ref() {
+        info.media_source = Some("anilist".to_string());
+        info.media_id = Some(value.clone());
+    }
+
     apply_range_total(
         &mut info.begin_season,
         &mut info.end_season,
@@ -229,6 +273,25 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
     );
     info.title = parsed_title;
     info
+}
+
+/// 从标题移除扩展数据源ID标签，并保留优先出现的原生ID。
+fn remove_explicit_media_id(
+    title: &mut String,
+    current: Option<String>,
+    patterns: &[Regex],
+) -> Option<String> {
+    let mut media_id = current;
+    for pattern in patterns {
+        if media_id.is_none() {
+            media_id = pattern
+                .captures(title)
+                .and_then(|capture| capture.get(1))
+                .map(|item| item.as_str().to_string());
+        }
+        *title = pattern.replace_all(title, "").trim().to_string();
+    }
+    media_id
 }
 
 /// 计算显式季集范围总数，兼容倒序输入。
@@ -260,6 +323,12 @@ fn apply_explicit_metainfo(meta: &mut MetaResult, explicit: &ExplicitMetaInfo) {
     }
     if let Some(value) = explicit.doubanid.as_ref() {
         meta.doubanid = Some(value.clone());
+    }
+    if let Some(value) = explicit.media_source.as_ref() {
+        meta.media_source = Some(value.clone());
+    }
+    if let Some(value) = explicit.media_id.as_ref() {
+        meta.media_id = Some(value.clone());
     }
     if let Some(value) = explicit.episode_group.as_ref() {
         meta.episode_group = Some(value.clone());
@@ -2085,7 +2154,7 @@ fn should_use_parent_title_for_file_stem(
     if !file_meta.isfile || stem.is_empty() || parent_dir_name.is_empty() {
         return false;
     }
-    if file_meta.tmdbid.is_some() || file_meta.doubanid.is_some() {
+    if file_meta.tmdbid.is_some() || file_meta.doubanid.is_some() || file_meta.media_id.is_some() {
         return false;
     }
     if !PARENT_LATIN_TITLE_RE.is_match(parent_dir_name) {
@@ -2149,6 +2218,12 @@ fn merge_meta(target: &mut MetaResult, source: &MetaResult) {
     }
     if target.doubanid.is_none() {
         target.doubanid = source.doubanid.clone();
+    }
+    if target.media_source.is_none() {
+        target.media_source = source.media_source.clone();
+    }
+    if target.media_id.is_none() {
+        target.media_id = source.media_id.clone();
     }
 }
 
