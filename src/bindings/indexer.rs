@@ -239,7 +239,7 @@ fn py_string(args: Option<&Bound<'_, PyAny>>) -> Option<String> {
         .and_then(|value| value.to_str().ok().map(str::to_string))
 }
 
-/// 从分类配置读取电影和电视剧分类 ID。
+/// 从分类配置读取电影、电视剧和音乐分类 ID。
 fn parse_category_map(category: Option<&Bound<'_, PyDict>>) -> PyResult<Option<CategoryMap>> {
     let Some(category) = category else {
         return Ok(None);
@@ -247,6 +247,7 @@ fn parse_category_map(category: Option<&Bound<'_, PyDict>>) -> PyResult<Option<C
     Ok(Some(CategoryMap::new(
         category_ids_for_field(category, "tv")?,
         category_ids_for_field(category, "movie")?,
+        category_ids_for_field(category, "music")?,
     )))
 }
 

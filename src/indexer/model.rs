@@ -36,6 +36,7 @@ pub(crate) enum TextFilter {
 pub(crate) struct CategoryMap {
     pub(super) tv: HashSet<String>,
     pub(super) movie: HashSet<String>,
+    pub(super) music: HashSet<String>,
 }
 
 impl FieldSpec {
@@ -60,11 +61,12 @@ impl FieldSpec {
 }
 
 impl CategoryMap {
-    /// 从电影和电视剧分类 ID 创建分类映射。
-    pub(crate) fn new(tv: Vec<String>, movie: Vec<String>) -> Self {
+    /// 从电影、电视剧和音乐分类 ID 创建分类映射。
+    pub(crate) fn new(tv: Vec<String>, movie: Vec<String>, music: Vec<String>) -> Self {
         Self {
             tv: tv.into_iter().collect(),
             movie: movie.into_iter().collect(),
+            music: music.into_iter().collect(),
         }
     }
 }

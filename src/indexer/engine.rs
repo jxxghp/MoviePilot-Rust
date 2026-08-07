@@ -507,11 +507,16 @@ fn map_category_value(value: &str, category: Option<&CategoryMap>) -> &'static s
     let Some(category) = category else {
         return "未知";
     };
-    if category.tv.contains(value) && !category.movie.contains(value) {
-        return "电视剧";
-    }
-    if category.movie.contains(value) {
-        return "电影";
+    let matches = [
+        (category.movie.contains(value), "电影"),
+        (category.tv.contains(value), "电视剧"),
+        (category.music.contains(value), "音乐"),
+    ]
+    .into_iter()
+    .filter_map(|(matched, media_type)| matched.then_some(media_type))
+    .collect::<Vec<_>>();
+    if matches.len() == 1 {
+        return matches[0];
     }
     "未知"
 }
@@ -954,8 +959,9 @@ fn standardize_base_url(host: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::map_category_value;
     use super::{apply_text_filters, normalize_site_link, parse_filesize_text};
-    use crate::indexer::model::TextFilter;
+    use crate::indexer::model::{CategoryMap, TextFilter};
 
     /// 验证文件大小解析覆盖常用二进制单位。
     #[test]
@@ -988,5 +994,27 @@ mod tests {
             normalize_site_link("https://example.com/", "details.php?id=1", true),
             "https://example.com/details.php?id=1"
         );
+    }
+
+    /// 音乐分类 ID 应映射为统一的音乐媒体类型。
+    #[test]
+    fn maps_music_category() {
+        let category = CategoryMap::new(
+            vec!["2".to_string()],
+            vec!["1".to_string()],
+            vec!["3".to_string()],
+        );
+
+        assert_eq!(map_category_value("3", Some(&category)), "音乐");
+        assert_eq!(map_category_value("1", Some(&category)), "电影");
+        assert_eq!(map_category_value("2", Some(&category)), "电视剧");
+    }
+
+    /// 跨媒体重复分类 ID 应保持未知，避免错误归类。
+    #[test]
+    fn rejects_ambiguous_category() {
+        let category = CategoryMap::new(vec!["1".to_string()], vec!["1".to_string()], Vec::new());
+
+        assert_eq!(map_category_value("1", Some(&category)), "未知");
     }
 }
