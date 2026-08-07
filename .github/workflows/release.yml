@@ -6,7 +6,7 @@ on:
     types: [published]
   push:
     branches:
-      - main
+      - v3
     paths:
       - 'Cargo.toml'
 
@@ -239,7 +239,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: jxxghp/MoviePilot
-          ref: v2
+          ref: v3
           token: ${{ secrets.MOVIEPILOT_REPO_TOKEN }}
           path: moviepilot
 
@@ -273,5 +273,5 @@ jobs:
 
             PyPI: https://pypi.org/project/moviepilot-rust/${{ needs.prepare.outputs.version }}/
           branch: chore/bump-moviepilot-rust-${{ needs.prepare.outputs.version }}
-          base: v2
+          base: v3
           delete-branch: true
