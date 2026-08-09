@@ -176,6 +176,36 @@ class MetaInfoPublicEntryTest(TestCase):
         self.assertEqual(parsed["resource_effect"], "HDRVivid")
         self.assertEqual(parsed["fps"], 50)
 
+    def test_preserves_all_resource_types(self):
+        """资源类型应按出现顺序完整保留、规范化并去重。"""
+        cases = [
+            (
+                "They.Will.Kill.You.2026.2160p.UHD.BluRay.Remux."
+                "HEVC.DV.TrueHD.7.1.Atmos.mkv",
+                "UHD BluRay REMUX",
+            ),
+            (
+                "Movie.2026.2160p.UHD.Blu-ray.Remux.BDRip.HEVC.mkv",
+                "UHD BluRay REMUX BDRIP",
+            ),
+            (
+                "Movie.2026.2160p.UHD.BluRay.UHD.Remux.Remux.HEVC.mkv",
+                "UHD BluRay REMUX",
+            ),
+            (
+                "Movie.2026.1080p.WEB-DL.WEBRip.Remux.H264.mkv",
+                "WEB-DL WEBRip REMUX",
+            ),
+        ]
+        for title, expected in cases:
+            with self.subTest(title=title):
+                parsed = moviepilot_rust.parse_metainfo_fast(
+                    title,
+                    None,
+                    build_options(),
+                )
+                self.assertEqual(parsed["resource_type"], expected)
+
     def test_parse_options_cache_tracks_mutated_dict_content(self):
         """MetaInfo 配置缓存不能因 Python 字典复用而沿用旧识别词。"""
         options = build_options(custom_words=["测试替换 => "])

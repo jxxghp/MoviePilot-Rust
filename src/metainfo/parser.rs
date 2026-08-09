@@ -462,7 +462,7 @@ fn parse_video(
         meta.resource_effect = Some(state.effect.join(" "));
     }
     if !state.source.is_empty() {
-        meta.resource_type = Some(state.source.trim().to_string());
+        meta.resource_type = Some(state.source.join(" "));
     }
     if meta
         .resource_type
@@ -1188,6 +1188,47 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
     }
 }
 
+/// 按出现顺序追加片源标记并忽略重复项。
+fn append_resource_source(state: &mut VideoState, source: &str) {
+    let source_name = match source.to_uppercase().as_str() {
+        "BLURAY" => "BluRay",
+        "HDTV" => "HDTV",
+        "UHDTV" => "UHDTV",
+        "HDDVD" => "HDDVD",
+        "WEBRIP" => "WEBRip",
+        "DVDRIP" => "DVDRip",
+        "BDRIP" => "BDRIP",
+        "BLU" => "BLU",
+        "WEB" => "WEB",
+        "BD" => "BD",
+        "HDRIP" => "HDRip",
+        "REMUX" => "REMUX",
+        "UHD" => "UHD",
+        "WEBDL" | "WEB-DL" => "WEB-DL",
+        _ => source,
+    };
+    if !state
+        .source
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(source_name))
+    {
+        state.source.push(source_name.to_string());
+    }
+}
+
+/// 将拆分的片源前缀替换为完整规范名称。
+fn replace_last_resource_source(state: &mut VideoState, source: &str, replacement: &str) {
+    if state
+        .source
+        .last()
+        .map(|item| item.eq_ignore_ascii_case(source))
+        .unwrap_or(false)
+    {
+        state.source.pop();
+    }
+    append_resource_source(state, replacement);
+}
+
 /// 识别片源和特效。
 fn init_resource_type(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
     if meta_name(meta).is_none() {
@@ -1195,32 +1236,17 @@ fn init_resource_type(meta: &mut MetaResult, state: &mut VideoState, token: &str
     }
     let upper = token.to_uppercase();
     if upper == "DL" && state.last_token_type == "source" && state.last_token == "WEB" {
-        state.source = "WEB-DL".to_string();
+        replace_last_resource_source(state, "WEB", "WEB-DL");
         state.continue_flag = false;
         return;
     }
-    if token == "ray" && state.last_token_type == "source" && state.last_token == "BLU" {
-        state.source = if state.source == "UHD" {
-            "UHD BluRay"
-        } else {
-            "BluRay"
-        }
-        .to_string();
+    if upper == "RAY" && state.last_token_type == "source" && state.last_token == "BLU" {
+        replace_last_resource_source(state, "BLU", "BluRay");
         state.continue_flag = false;
         return;
     }
     if upper == "WEBDL" {
-        state.source = "WEB-DL".to_string();
-        state.continue_flag = false;
-        return;
-    }
-    if upper == "REMUX" && state.source == "BluRay" {
-        state.source = "BluRay REMUX".to_string();
-        state.continue_flag = false;
-        return;
-    }
-    if upper == "BLURAY" && state.source == "UHD" {
-        state.source = "UHD BluRay".to_string();
+        append_resource_source(state, "WEB-DL");
         state.continue_flag = false;
         return;
     }
@@ -1228,12 +1254,9 @@ fn init_resource_type(meta: &mut MetaResult, state: &mut VideoState, token: &str
         state.last_token_type = "source".to_string();
         state.continue_flag = false;
         state.stop_name_flag = true;
-        if state.source.is_empty() {
-            state.source = cap
-                .get(1)
-                .map(|item| item.as_str().to_string())
-                .unwrap_or_default();
-            state.last_token = state.source.to_uppercase();
+        if let Some(source) = cap.get(1).map(|item| item.as_str()) {
+            append_resource_source(state, source);
+            state.last_token = source.to_uppercase();
         }
     } else if let Some(cap) = EFFECT_PATTERN.captures(token) {
         state.last_token_type = "effect".to_string();
@@ -2542,6 +2565,35 @@ mod tests {
         assert_eq!(parsed.resource_pix.as_deref(), Some("1080p"));
         assert_eq!(parsed.resource_type.as_deref(), Some("WEB-DL"));
         assert_eq!(parsed.audio_encode.as_deref(), Some("DDP 5.1"));
+    }
+
+    /// 片源标记应按出现顺序完整保留、规范化并去重。
+    #[test]
+    fn preserves_all_resource_sources() {
+        let options = ParseOptions::empty();
+        let cases = [
+            (
+                "They.Will.Kill.You.2026.2160p.UHD.BluRay.Remux.HEVC.DV.TrueHD.7.1.Atmos.mkv",
+                "UHD BluRay REMUX",
+            ),
+            (
+                "Movie.2026.2160p.UHD.Blu-ray.Remux.BDRip.HEVC.mkv",
+                "UHD BluRay REMUX BDRIP",
+            ),
+            (
+                "Movie.2026.2160p.UHD.BluRay.UHD.Remux.Remux.HEVC.mkv",
+                "UHD BluRay REMUX",
+            ),
+            (
+                "Movie.2026.1080p.WEB-DL.WEBRip.Remux.H264.mkv",
+                "WEB-DL WEBRip REMUX",
+            ),
+        ];
+
+        for (title, expected) in cases {
+            let parsed = build_meta_info(title, None, &options, true);
+            assert_eq!(parsed.resource_type.as_deref(), Some(expected), "{title}");
+        }
     }
 
     /// 发布组只能在约定的分隔符后识别，标题首词不得参与发布组拼接。

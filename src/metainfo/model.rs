@@ -61,7 +61,7 @@ pub(super) struct TokenCursor {
 
 #[derive(Default)]
 pub(super) struct VideoState {
-    pub(super) source: String,
+    pub(super) source: Vec<String>,
     pub(super) effect: Vec<String>,
     pub(super) index: usize,
     pub(super) stop_name_flag: bool,
