@@ -347,6 +347,42 @@ class MetaInfoPublicEntryTest(TestCase):
                 self.assertEqual(parsed["metainfo"][source_key], media_id)
                 self.assertNotIn(f"{source}id=", parsed["title"])
 
+    def test_find_metainfo_supports_fixed_generic_media_sources(self):
+        """通用标签只接受固定来源枚举，并输出规范来源与原生ID。"""
+        cases = [
+            ("tmdb", "themoviedb"),
+            ("douban", "douban"),
+            ("bangumi", "bangumi"),
+            ("anilist", "anilist"),
+            ("imdb", "imdb"),
+            ("tvdb", "tvdb"),
+            ("musicbrainz", "musicbrainz"),
+            ("audio_db", "theaudiodb"),
+            ("douban_music", "doubanmusic"),
+            ("bilibili", "bilibili"),
+            ("mango_tv", "mangguodiscover"),
+            ("migu_video", "migu"),
+            ("tencent_video", "tencentvideodiscover"),
+        ]
+        for supplied_source, expected_source in cases:
+            with self.subTest(source=supplied_source):
+                parsed = moviepilot_rust.find_metainfo_fast(
+                    "Title "
+                    f"{{[media_source={supplied_source};media_id=native-1;type=tv]}}"
+                )
+                self.assertEqual(
+                    parsed["metainfo"]["media_source"], expected_source
+                )
+                self.assertEqual(parsed["metainfo"]["media_id"], "native-1")
+                self.assertNotIn("media_source=", parsed["title"])
+
+        invalid = moviepilot_rust.find_metainfo_fast(
+            "Title {[media_source=plugin_source;media_id=custom-1]}"
+        )
+        self.assertIsNone(invalid["metainfo"]["media_source"])
+        self.assertIsNone(invalid["metainfo"]["media_id"])
+        self.assertNotIn("media_source=", invalid["title"])
+
     def test_parse_metainfo_supports_anilist_id_alias(self):
         """AniList方括号别名应进入公开MetaInfo结果。"""
         parsed = moviepilot_rust.parse_metainfo_fast(
@@ -371,7 +407,8 @@ class MetaInfoPublicEntryTest(TestCase):
     def test_custom_words_support_anilist_id(self):
         """自定义识别词替换结果中的AniList ID应被Rust快路径识别。"""
         custom_words = [
-            "Sousou no Frieren => Frieren {[anilistid=154587;type=tv;s=1]}"
+            "Sousou no Frieren => Frieren "
+            "{[media_source=anilist;media_id=154587;type=tv;s=1]}"
         ]
         parsed = moviepilot_rust.parse_metainfo_fast(
             "Sousou no Frieren 01",

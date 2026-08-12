@@ -2,6 +2,7 @@ mod bindings;
 mod filter;
 mod indexer;
 mod metainfo;
+mod metamusic;
 mod rss;
 mod support;
 
@@ -43,6 +44,10 @@ fn moviepilot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(bindings::metainfo::find_metainfo_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::metamusic::parse_metamusic_fast,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(bindings::rss::parse_rss_items_fast, m)?)?;
     Ok(())
 }

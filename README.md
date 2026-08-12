@@ -15,6 +15,7 @@ src/
 ├── filter/     # 类型化过滤规则、表达式 AST 和执行引擎
 ├── indexer/    # Indexer 配置模型、HTML 选择器和字段解析
 ├── metainfo/   # 元信息模型、配置、正则规则和影视标题解析
+├── metamusic/  # 音乐元信息模型、正则规则和标题解析
 ├── rss/        # RSS/Atom 数据模型和流式解析器
 └── support/    # 与业务无关的有界缓存等基础设施
 ```

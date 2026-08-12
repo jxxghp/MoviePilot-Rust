@@ -1,5 +1,5 @@
 use super::custom_words::prepare_words;
-use super::model::{ExplicitMetaInfo, MetaResult, TokenCursor, VideoState};
+use super::model::{ExplicitMetaInfo, MediaSource, MetaResult, TokenCursor, VideoState};
 use super::options::ParseOptions;
 use super::patterns::*;
 use super::regex::Regex;
@@ -155,6 +155,14 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
         let anilistid = BRACED_ANILISTID_RE
             .captures(&result)
             .and_then(|cap| cap.get(1));
+        let media_source_value = BRACED_MEDIA_SOURCE_RE
+            .captures(&result)
+            .and_then(|cap| cap.get(1))
+            .map(|value| value.as_str().trim().to_string());
+        let media_id_value = BRACED_MEDIA_ID_RE
+            .captures(&result)
+            .and_then(|cap| cap.get(1))
+            .map(|value| value.as_str().trim().to_string());
         let mtype = BRACED_TYPE_RE.captures(&result).and_then(|cap| cap.get(1));
         let episode_group = BRACED_EPISODE_GROUP_RE
             .captures(&result)
@@ -172,16 +180,35 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             .captures(&result)
             .and_then(|cap| cap.get(1));
         if let Some(value) = tmdbid {
-            info.tmdbid = Some(value.as_str().to_string());
+            if let Some(media_id) = normalize_legacy_media_id(value.as_str()) {
+                info.tmdbid = Some(media_id);
+            }
         }
         if let Some(value) = doubanid {
-            info.doubanid = Some(value.as_str().to_string());
+            if let Some(media_id) = normalize_legacy_media_id(value.as_str()) {
+                info.doubanid = Some(media_id);
+            }
         }
         if let Some(value) = bangumiid {
-            info.bangumiid = Some(value.as_str().to_string());
+            if let Some(media_id) = normalize_legacy_media_id(value.as_str()) {
+                info.bangumiid = Some(media_id);
+            }
         }
         if let Some(value) = anilistid {
-            info.anilistid = Some(value.as_str().to_string());
+            if let Some(media_id) = normalize_legacy_media_id(value.as_str()) {
+                info.anilistid = Some(media_id);
+            }
+        }
+        if let (Some(source), Some(media_id)) = (
+            media_source_value
+                .as_deref()
+                .and_then(MediaSource::parse_alias),
+            media_id_value
+                .as_deref()
+                .and_then(normalize_generic_media_id),
+        ) {
+            info.media_source = Some(source);
+            info.media_id = Some(media_id);
         }
         if let Some(value) = mtype {
             match value.as_str() {
@@ -209,6 +236,8 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             || doubanid.is_some()
             || bangumiid.is_some()
             || anilistid.is_some()
+            || media_source_value.is_some()
+            || media_id_value.is_some()
             || mtype.is_some()
             || episode_group.is_some()
             || begin_season.is_some()
@@ -231,34 +260,35 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
         ANILIST_ID_RE_LIST.as_slice(),
     );
 
-    if let Some(cap) = EMBY_TMDB_RE_LIST[0].captures(&parsed_title) {
-        info.tmdbid = cap.get(1).map(|item| item.as_str().to_string());
+    if EMBY_TMDB_RE_LIST[0].is_match(&parsed_title) {
+        if let Some(media_id) = EMBY_TMDB_RE_LIST[0]
+            .captures_iter(&parsed_title)
+            .filter_map(|capture| capture.get(1))
+            .find_map(|item| normalize_legacy_media_id(item.as_str()))
+        {
+            info.tmdbid = Some(media_id);
+        }
         parsed_title = EMBY_TMDB_RE_LIST[0]
             .replace_all(&parsed_title, "")
             .trim()
             .to_string();
-    } else if info.tmdbid.is_none() {
-        for pattern in EMBY_TMDB_RE_LIST.iter().skip(1) {
-            if let Some(cap) = pattern.captures(&parsed_title) {
-                info.tmdbid = cap.get(1).map(|item| item.as_str().to_string());
-                parsed_title = pattern.replace_all(&parsed_title, "").trim().to_string();
-                break;
-            }
-        }
     }
+    info.tmdbid = remove_explicit_media_id(&mut parsed_title, info.tmdbid, &EMBY_TMDB_RE_LIST[1..]);
 
-    if let Some(value) = info.tmdbid.as_ref() {
-        info.media_source = Some("themoviedb".to_string());
-        info.media_id = Some(value.clone());
-    } else if let Some(value) = info.doubanid.as_ref() {
-        info.media_source = Some("douban".to_string());
-        info.media_id = Some(value.clone());
-    } else if let Some(value) = info.bangumiid.as_ref() {
-        info.media_source = Some("bangumi".to_string());
-        info.media_id = Some(value.clone());
-    } else if let Some(value) = info.anilistid.as_ref() {
-        info.media_source = Some("anilist".to_string());
-        info.media_id = Some(value.clone());
+    if info.media_source.is_none() {
+        if let Some(value) = info.tmdbid.as_ref() {
+            info.media_source = Some(MediaSource::TheMovieDb);
+            info.media_id = Some(value.clone());
+        } else if let Some(value) = info.doubanid.as_ref() {
+            info.media_source = Some(MediaSource::Douban);
+            info.media_id = Some(value.clone());
+        } else if let Some(value) = info.bangumiid.as_ref() {
+            info.media_source = Some(MediaSource::Bangumi);
+            info.media_id = Some(value.clone());
+        } else if let Some(value) = info.anilistid.as_ref() {
+            info.media_source = Some(MediaSource::AniList);
+            info.media_id = Some(value.clone());
+        }
     }
 
     apply_range_total(
@@ -285,13 +315,28 @@ fn remove_explicit_media_id(
     for pattern in patterns {
         if media_id.is_none() {
             media_id = pattern
-                .captures(title)
-                .and_then(|capture| capture.get(1))
-                .map(|item| item.as_str().to_string());
+                .captures_iter(title)
+                .filter_map(|capture| capture.get(1))
+                .find_map(|item| normalize_legacy_media_id(item.as_str()));
         }
         *title = pattern.replace_all(title, "").trim().to_string();
     }
     media_id
+}
+
+/// 规范化通用媒体ID，空白和占位值0不能进入媒体身份。
+fn normalize_generic_media_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && value != "0").then(|| value.to_string())
+}
+
+/// 规范化旧版数字媒体ID，只保留大于0的纯数字值。
+fn normalize_legacy_media_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()
+        && value.chars().all(|character| character.is_ascii_digit())
+        && value.chars().any(|character| character != '0'))
+    .then(|| value.to_string())
 }
 
 /// 计算显式季集范围总数，兼容倒序输入。
@@ -325,7 +370,7 @@ fn apply_explicit_metainfo(meta: &mut MetaResult, explicit: &ExplicitMetaInfo) {
         meta.doubanid = Some(value.clone());
     }
     if let Some(value) = explicit.media_source.as_ref() {
-        meta.media_source = Some(value.clone());
+        meta.media_source = Some(*value);
     }
     if let Some(value) = explicit.media_id.as_ref() {
         meta.media_id = Some(value.clone());
@@ -2243,7 +2288,7 @@ fn merge_meta(target: &mut MetaResult, source: &MetaResult) {
         target.doubanid = source.doubanid.clone();
     }
     if target.media_source.is_none() {
-        target.media_source = source.media_source.clone();
+        target.media_source = source.media_source;
     }
     if target.media_id.is_none() {
         target.media_id = source.media_id.clone();
@@ -2530,8 +2575,71 @@ fn match_customization(title: &str, regex: Option<&Regex>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_meta_info, build_release_group_regex, match_release_group};
+    use super::{
+        build_meta_info, build_release_group_regex, find_explicit_metainfo, match_release_group,
+    };
+    use crate::metainfo::model::MediaSource;
     use crate::metainfo::ParseOptions;
+
+    /// 通用媒体身份标签的0和空白值不得形成身份，但标签仍须从标题移除。
+    #[test]
+    fn rejects_empty_or_zero_generic_media_identity() {
+        for title in [
+            "Title {[media_source=tmdb;media_id=0;type=movie]}",
+            "Title {[media_source=tmdb;media_id=   ]}",
+            "Title {[media_source=   ;media_id=123]}",
+        ] {
+            let explicit = find_explicit_metainfo(title);
+
+            assert_eq!(explicit.media_source, None, "title: {title}");
+            assert_eq!(explicit.media_id, None, "title: {title}");
+            assert!(!explicit.title.contains("media_source="), "title: {title}");
+        }
+    }
+
+    /// 旧版来源专用标签的0和空白值不得形成身份，但标签仍须从标题移除。
+    #[test]
+    fn rejects_empty_or_zero_legacy_media_identity() {
+        for title in [
+            "Title {[tmdbid=0;type=movie]}",
+            "Title {[doubanid=   ;type=movie]}",
+            "Title {[bangumiid=0;type=tv]}",
+            "Title {[anilistid=   ;type=tv]}",
+            "Title [tmdbid=0]",
+            "Title [tmdbid=000]",
+            "Title [bangumi=0]",
+            "Title [anilist=   ]",
+        ] {
+            let explicit = find_explicit_metainfo(title);
+
+            assert_eq!(explicit.tmdbid, None, "title: {title}");
+            assert_eq!(explicit.doubanid, None, "title: {title}");
+            assert_eq!(explicit.bangumiid, None, "title: {title}");
+            assert_eq!(explicit.anilistid, None, "title: {title}");
+            assert_eq!(explicit.media_source, None, "title: {title}");
+            assert_eq!(explicit.media_id, None, "title: {title}");
+            assert!(!explicit.title.contains("id="), "title: {title}");
+            assert!(!explicit.title.contains("bangumi="), "title: {title}");
+            assert!(!explicit.title.contains("anilist="), "title: {title}");
+        }
+    }
+
+    /// 无效占位标签不能阻断同一标题中后续的有效媒体身份。
+    #[test]
+    fn keeps_valid_media_identity_after_zero_placeholder() {
+        for title in ["Title [tmdbid=0] [tmdbid=123]", "Title [tmdb=0] [tmdb=123]"] {
+            let explicit = find_explicit_metainfo(title);
+
+            assert_eq!(explicit.tmdbid.as_deref(), Some("123"), "title: {title}");
+            assert_eq!(
+                explicit.media_source,
+                Some(MediaSource::TheMovieDb),
+                "title: {title}"
+            );
+            assert_eq!(explicit.media_id.as_deref(), Some("123"), "title: {title}");
+            assert!(!explicit.title.contains("tmdb"), "title: {title}");
+        }
+    }
 
     /// 验证核心解析器无需 Python 运行时即可识别基础影视字段。
     #[test]

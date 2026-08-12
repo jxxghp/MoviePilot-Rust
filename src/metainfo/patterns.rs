@@ -30,13 +30,17 @@ pub(super) static ANIME_SQUARE_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
 pub(super) static BRACED_METAINFO_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<={\[)([\W\w]+)(?=]})").unwrap());
 pub(super) static BRACED_TMDBID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<=tmdbid=)(\d+)").unwrap());
+    Lazy::new(|| Regex::new(r"(?<=tmdbid=)(\s*\d*\s*)(?=;|$)").unwrap());
 pub(super) static BRACED_DOUBANID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<=doubanid=)(\d+)").unwrap());
+    Lazy::new(|| Regex::new(r"(?<=doubanid=)(\s*\d*\s*)(?=;|$)").unwrap());
 pub(super) static BRACED_BANGUMIID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<=bangumiid=)(\d+)").unwrap());
+    Lazy::new(|| Regex::new(r"(?<=bangumiid=)(\s*\d*\s*)(?=;|$)").unwrap());
 pub(super) static BRACED_ANILISTID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<=anilistid=)(\d+)").unwrap());
+    Lazy::new(|| Regex::new(r"(?<=anilistid=)(\s*\d*\s*)(?=;|$)").unwrap());
+pub(super) static BRACED_MEDIA_SOURCE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<=media_source=)([^;\]]*)").unwrap());
+pub(super) static BRACED_MEDIA_ID_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<=media_id=)([^;\]]*)").unwrap());
 pub(super) static BRACED_TYPE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=type=)(\w+)").unwrap());
 pub(super) static BRACED_EPISODE_GROUP_RE: Lazy<Regex> =
@@ -51,26 +55,26 @@ pub(super) static BRACED_END_EPISODE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=e=\d+-)(\d+)").unwrap());
 pub(super) static EMBY_TMDB_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
-        Regex::new(r"\[tmdbid[=\-](\d+)\]").unwrap(),
-        Regex::new(r"\[tmdb[=\-](\d+)\]").unwrap(),
-        Regex::new(r"\{tmdbid[=\-](\d+)\}").unwrap(),
-        Regex::new(r"\{tmdb[=\-](\d+)\}").unwrap(),
+        Regex::new(r"\[tmdbid[=\-]\s*(\d*)\s*\]").unwrap(),
+        Regex::new(r"\[tmdb[=\-]\s*(\d*)\s*\]").unwrap(),
+        Regex::new(r"\{tmdbid[=\-]\s*(\d*)\s*\}").unwrap(),
+        Regex::new(r"\{tmdb[=\-]\s*(\d*)\s*\}").unwrap(),
     ]
 });
 pub(super) static BANGUMI_ID_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
-        Regex::new(r"\[bangumiid[=\-](\d+)\]").unwrap(),
-        Regex::new(r"\[bangumi[=\-](\d+)\]").unwrap(),
-        Regex::new(r"\{bangumiid[=\-](\d+)\}").unwrap(),
-        Regex::new(r"\{bangumi[=\-](\d+)\}").unwrap(),
+        Regex::new(r"\[bangumiid[=\-]\s*(\d*)\s*\]").unwrap(),
+        Regex::new(r"\[bangumi[=\-]\s*(\d*)\s*\]").unwrap(),
+        Regex::new(r"\{bangumiid[=\-]\s*(\d*)\s*\}").unwrap(),
+        Regex::new(r"\{bangumi[=\-]\s*(\d*)\s*\}").unwrap(),
     ]
 });
 pub(super) static ANILIST_ID_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
-        Regex::new(r"\[anilistid[=\-](\d+)\]").unwrap(),
-        Regex::new(r"\[anilist[=\-](\d+)\]").unwrap(),
-        Regex::new(r"\{anilistid[=\-](\d+)\}").unwrap(),
-        Regex::new(r"\{anilist[=\-](\d+)\}").unwrap(),
+        Regex::new(r"\[anilistid[=\-]\s*(\d*)\s*\]").unwrap(),
+        Regex::new(r"\[anilist[=\-]\s*(\d*)\s*\]").unwrap(),
+        Regex::new(r"\{anilistid[=\-]\s*(\d*)\s*\}").unwrap(),
+        Regex::new(r"\{anilist[=\-]\s*(\d*)\s*\}").unwrap(),
     ]
 });
 pub(super) static SEASON_FULL_RE: Lazy<Regex> = Lazy::new(|| {
