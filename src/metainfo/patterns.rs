@@ -37,10 +37,6 @@ pub(super) static BRACED_BANGUMIID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=bangumiid=)(\s*\d*\s*)(?=;|$)").unwrap());
 pub(super) static BRACED_ANILISTID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=anilistid=)(\s*\d*\s*)(?=;|$)").unwrap());
-pub(super) static BRACED_MEDIA_SOURCE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<=media_source=)([^;\]]*)").unwrap());
-pub(super) static BRACED_MEDIA_ID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<=media_id=)([^;\]]*)").unwrap());
 pub(super) static BRACED_TYPE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?<=type=)(\w+)").unwrap());
 pub(super) static BRACED_EPISODE_GROUP_RE: Lazy<Regex> =

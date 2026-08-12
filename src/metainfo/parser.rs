@@ -155,14 +155,6 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
         let anilistid = BRACED_ANILISTID_RE
             .captures(&result)
             .and_then(|cap| cap.get(1));
-        let media_source_value = BRACED_MEDIA_SOURCE_RE
-            .captures(&result)
-            .and_then(|cap| cap.get(1))
-            .map(|value| value.as_str().trim().to_string());
-        let media_id_value = BRACED_MEDIA_ID_RE
-            .captures(&result)
-            .and_then(|cap| cap.get(1))
-            .map(|value| value.as_str().trim().to_string());
         let mtype = BRACED_TYPE_RE.captures(&result).and_then(|cap| cap.get(1));
         let episode_group = BRACED_EPISODE_GROUP_RE
             .captures(&result)
@@ -199,17 +191,6 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
                 info.anilistid = Some(media_id);
             }
         }
-        if let (Some(source), Some(media_id)) = (
-            media_source_value
-                .as_deref()
-                .and_then(MediaSource::parse_alias),
-            media_id_value
-                .as_deref()
-                .and_then(normalize_generic_media_id),
-        ) {
-            info.media_source = Some(source);
-            info.media_id = Some(media_id);
-        }
         if let Some(value) = mtype {
             match value.as_str() {
                 "movie" | "movies" => info.media_type = Some(MEDIA_TYPE_MOVIE.to_string()),
@@ -236,8 +217,6 @@ pub(crate) fn find_explicit_metainfo(title: &str) -> ExplicitMetaInfo {
             || doubanid.is_some()
             || bangumiid.is_some()
             || anilistid.is_some()
-            || media_source_value.is_some()
-            || media_id_value.is_some()
             || mtype.is_some()
             || episode_group.is_some()
             || begin_season.is_some()
@@ -322,12 +301,6 @@ fn remove_explicit_media_id(
         *title = pattern.replace_all(title, "").trim().to_string();
     }
     media_id
-}
-
-/// 规范化通用媒体ID，空白和占位值0不能进入媒体身份。
-fn normalize_generic_media_id(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty() && value != "0").then(|| value.to_string())
 }
 
 /// 规范化旧版数字媒体ID，只保留大于0的纯数字值。
@@ -2581,10 +2554,11 @@ mod tests {
     use crate::metainfo::model::MediaSource;
     use crate::metainfo::ParseOptions;
 
-    /// 通用媒体身份标签的0和空白值不得形成身份，但标签仍须从标题移除。
+    /// 通用媒体身份字段不是自定义识别词语法，不能形成媒体身份。
     #[test]
-    fn rejects_empty_or_zero_generic_media_identity() {
+    fn ignores_generic_media_identity_parameters() {
         for title in [
+            "Title {[media_source=tmdb;media_id=123;type=movie]}",
             "Title {[media_source=tmdb;media_id=0;type=movie]}",
             "Title {[media_source=tmdb;media_id=   ]}",
             "Title {[media_source=   ;media_id=123]}",
@@ -2593,7 +2567,6 @@ mod tests {
 
             assert_eq!(explicit.media_source, None, "title: {title}");
             assert_eq!(explicit.media_id, None, "title: {title}");
-            assert!(!explicit.title.contains("media_source="), "title: {title}");
         }
     }
 
