@@ -12,9 +12,9 @@ pub(crate) fn parse_rss_items_fast(
     py: Python<'_>,
     xml_text: &str,
     max_items: usize,
-) -> PyResult<Option<PyObject>> {
+) -> PyResult<Option<Py<PyAny>>> {
     let parsed = py
-        .allow_threads(|| parse_rss_items(xml_text, max_items))
+        .detach(|| parse_rss_items(xml_text, max_items))
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     let result = PyList::empty(py);
     let datetime_mod = py.import("datetime")?;
@@ -42,8 +42,8 @@ fn item_to_py(
     datetime_cls: &Bound<'_, PyAny>,
     timezone_cls: &Bound<'_, PyAny>,
     timedelta_cls: &Bound<'_, PyAny>,
-    timezone_cache: &mut HashMap<i32, PyObject>,
-) -> PyResult<PyObject> {
+    timezone_cache: &mut HashMap<i32, Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("title", &item.title)?;
     dict.set_item("enclosure", &item.enclosure)?;
@@ -78,7 +78,7 @@ fn py_datetime_from_timestamp<'py>(
     datetime_cls: &Bound<'py, PyAny>,
     timezone_cls: &Bound<'py, PyAny>,
     timedelta_cls: &Bound<'py, PyAny>,
-    timezone_cache: &mut HashMap<i32, PyObject>,
+    timezone_cache: &mut HashMap<i32, Py<PyAny>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let Some(local_dt) = Local
         .timestamp_opt(timestamp, 0)

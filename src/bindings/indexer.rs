@@ -18,14 +18,14 @@ pub(crate) fn parse_indexer_torrents_fast(
     fields: &Bound<'_, PyDict>,
     category: Option<&Bound<'_, PyDict>>,
     result_num: usize,
-) -> PyResult<Option<PyObject>> {
+) -> PyResult<Option<Py<PyAny>>> {
     let Some(list_selector) = get_selector_text(list_config)? else {
         return Ok(None);
     };
     let fields = parse_field_specs(fields)?;
     let category = parse_category_map(category)?;
     let rows = py
-        .allow_threads(|| {
+        .detach(|| {
             parse_indexer_torrents(
                 html_text,
                 domain,
@@ -49,15 +49,13 @@ pub(crate) fn parse_indexer_subtitles_fast(
     list_config: &Bound<'_, PyDict>,
     fields: &Bound<'_, PyDict>,
     result_num: usize,
-) -> PyResult<Option<PyObject>> {
+) -> PyResult<Option<Py<PyAny>>> {
     let Some(list_selector) = get_selector_text(list_config)? else {
         return Ok(None);
     };
     let fields = parse_field_specs(fields)?;
     let rows = py
-        .allow_threads(|| {
-            parse_indexer_subtitles(html_text, domain, &list_selector, &fields, result_num)
-        })
+        .detach(|| parse_indexer_subtitles(html_text, domain, &list_selector, &fields, result_num))
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     rows.map(|rows| rows_to_py(py, rows)).transpose()
 }
@@ -69,7 +67,7 @@ fn parse_field_specs(fields: &Bound<'_, PyDict>) -> PyResult<Vec<FieldSpec>> {
         if value.is_none() {
             continue;
         }
-        let Ok(config) = value.downcast_into::<PyDict>() else {
+        let Ok(config) = value.cast_into::<PyDict>() else {
             continue;
         };
         specs.push(FieldSpec::new(
@@ -113,7 +111,7 @@ fn parse_case_selectors(config: &Bound<'_, PyDict>) -> PyResult<Vec<(SelectorPla
     let Some(case_obj) = config.get_item("case")? else {
         return Ok(Vec::new());
     };
-    let Ok(case_dict) = case_obj.downcast::<PyDict>() else {
+    let Ok(case_dict) = case_obj.cast::<PyDict>() else {
         return Ok(Vec::new());
     };
     let mut selectors = Vec::new();
@@ -130,12 +128,12 @@ fn parse_text_filters(filters: Option<Bound<'_, PyAny>>) -> PyResult<Vec<TextFil
     let Some(filters) = filters.filter(|value| !value.is_none()) else {
         return Ok(Vec::new());
     };
-    let Ok(filters) = filters.downcast::<PyList>() else {
+    let Ok(filters) = filters.cast::<PyList>() else {
         return Ok(Vec::new());
     };
     let mut parsed = Vec::new();
     for item in filters.iter() {
-        let filter = item.downcast::<PyDict>()?;
+        let filter = item.cast::<PyDict>()?;
         let Some(name) = get_optional_string(filter, "name")? else {
             continue;
         };
@@ -192,7 +190,7 @@ fn parse_text_filter(name: &str, args: Option<&Bound<'_, PyAny>>) -> PyResult<Op
 
 /// 读取由字符串和整数索引组成的 filter 参数。
 fn parse_string_index_args(args: Option<&Bound<'_, PyAny>>) -> PyResult<Option<(String, i64)>> {
-    let Some(args) = args.and_then(|args| args.downcast::<PyList>().ok()) else {
+    let Some(args) = args.and_then(|args| args.cast::<PyList>().ok()) else {
         return Ok(None);
     };
     if args.len() < 2 {
@@ -206,7 +204,7 @@ fn parse_string_index_args(args: Option<&Bound<'_, PyAny>>) -> PyResult<Option<(
 
 /// 读取由两个字符串组成的 filter 参数。
 fn parse_string_pair_args(args: Option<&Bound<'_, PyAny>>) -> PyResult<Option<(String, String)>> {
-    let Some(args) = args.and_then(|args| args.downcast::<PyList>().ok()) else {
+    let Some(args) = args.and_then(|args| args.cast::<PyList>().ok()) else {
         return Ok(None);
     };
     if args.len() < 2 {
@@ -223,7 +221,7 @@ fn first_string_arg(args: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>>
     let Some(args) = args else {
         return Ok(None);
     };
-    if let Ok(list) = args.downcast::<PyList>() {
+    if let Ok(list) = args.cast::<PyList>() {
         return if list.is_empty() {
             Ok(None)
         } else {
@@ -256,12 +254,12 @@ fn category_ids_for_field(category: &Bound<'_, PyDict>, key: &str) -> PyResult<V
     let Some(value) = category.get_item(key)? else {
         return Ok(Vec::new());
     };
-    let Ok(list) = value.downcast::<PyList>() else {
+    let Ok(list) = value.cast::<PyList>() else {
         return Ok(Vec::new());
     };
     let mut values = Vec::new();
     for item in list.iter() {
-        let dict = item.downcast::<PyDict>()?;
+        let dict = item.cast::<PyDict>()?;
         if let Some(id) = get_optional_string(dict, "id")? {
             values.push(id);
         }
@@ -281,7 +279,7 @@ fn get_selector_text(config: &Bound<'_, PyDict>) -> PyResult<Option<String>> {
 }
 
 /// 将纯 Rust 行列表转换为 Python 字典列表。
-fn rows_to_py(py: Python<'_>, rows: Vec<ParsedRow>) -> PyResult<PyObject> {
+fn rows_to_py(py: Python<'_>, rows: Vec<ParsedRow>) -> PyResult<Py<PyAny>> {
     let result = PyList::empty(py);
     for row in rows {
         let dict = PyDict::new(py);

@@ -24,7 +24,7 @@ pub(crate) fn filter_torrents_fast(
     rule_set: &Bound<'_, PyDict>,
     mediainfo: Option<&Bound<'_, PyAny>>,
     metainfo_options: Option<&Bound<'_, PyDict>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let (results, _) = run_filter(
         py,
         groups,
@@ -47,7 +47,7 @@ pub(crate) fn filter_torrents_with_trace_fast(
     rule_set: &Bound<'_, PyDict>,
     mediainfo: Option<&Bound<'_, PyAny>>,
     metainfo_options: Option<&Bound<'_, PyDict>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let (results, traces) = run_filter(
         py,
         groups,
@@ -62,7 +62,7 @@ pub(crate) fn filter_torrents_with_trace_fast(
 
 /// 解析布尔过滤规则并转换成 Python 兼容嵌套列表。
 #[pyfunction]
-pub(crate) fn parse_filter_rule_fast(py: Python<'_>, expression: &str) -> PyResult<PyObject> {
+pub(crate) fn parse_filter_rule_fast(py: Python<'_>, expression: &str) -> PyResult<Py<PyAny>> {
     let expression =
         parse_filter_rule(expression).map_err(|error| PyValueError::new_err(error.to_string()))?;
     let outer = PyList::empty(py);
@@ -80,14 +80,14 @@ fn run_filter(
     mediainfo: Option<&Bound<'_, PyAny>>,
     metainfo_options: Option<&Bound<'_, PyDict>>,
     collect_trace: bool,
-) -> PyResult<(PyObject, PyObject)> {
+) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
     let groups = parse_filter_groups(groups)?;
     let matcher = parse_rule_matcher(rule_set)?;
     let torrents = parse_torrents(torrent_list, matcher.match_fields())?;
     let media = parse_media_snapshot(mediainfo)?;
     let metainfo_options = parse_options(metainfo_options)?;
     let (matches, messages) = py
-        .allow_threads(|| {
+        .detach(|| {
             filter_torrents(
                 &groups,
                 &torrents,
@@ -110,7 +110,7 @@ fn run_filter(
 fn parse_filter_groups(groups: &Bound<'_, PyList>) -> PyResult<Vec<FilterGroup>> {
     let mut result = Vec::new();
     for item in groups.iter() {
-        let dict = item.downcast::<PyDict>()?;
+        let dict = item.cast::<PyDict>()?;
         let name = get_optional_nonempty_string(dict, "name")?.unwrap_or_default();
         let rule_string = get_optional_nonempty_string(dict, "rule_string")?.unwrap_or_default();
         if let Some(group) = FilterGroup::new(name, rule_string) {
@@ -124,7 +124,7 @@ fn parse_filter_groups(groups: &Bound<'_, PyList>) -> PyResult<Vec<FilterGroup>>
 fn parse_rule_matcher(rule_set: &Bound<'_, PyDict>) -> PyResult<RuleMatcher> {
     let mut rules = HashMap::new();
     for (key, value) in rule_set.iter() {
-        let Ok(rule) = value.downcast::<PyDict>() else {
+        let Ok(rule) = value.cast::<PyDict>() else {
             continue;
         };
         rules.insert(key.extract::<String>()?, parse_rule_spec(rule)?);
@@ -136,7 +136,7 @@ fn parse_rule_matcher(rule_set: &Bound<'_, PyDict>) -> PyResult<RuleMatcher> {
 fn parse_rule_spec(rule: &Bound<'_, PyDict>) -> PyResult<RuleSpec> {
     let mut tmdb = HashMap::new();
     if let Some(value) = rule.get_item("tmdb")?.filter(|value| !value.is_none()) {
-        let dict = value.downcast::<PyDict>()?;
+        let dict = value.cast::<PyDict>()?;
         for (key, value) in dict.iter() {
             if value.is_none() {
                 continue;
@@ -222,7 +222,7 @@ fn parse_media_snapshot(mediainfo: Option<&Bound<'_, PyAny>>) -> PyResult<MediaS
         }
     }
     if let Ok(dict_value) = media.getattr("__dict__") {
-        if let Ok(dict) = dict_value.downcast_into::<PyDict>() {
+        if let Ok(dict) = dict_value.cast_into::<PyDict>() {
             for (key, value) in dict.iter() {
                 let key = key.extract::<String>()?;
                 if values.contains_key(&key) || value.is_none() {
@@ -271,12 +271,12 @@ fn media_attr_values(media: &Bound<'_, PyAny>, attr: &str) -> PyResult<Vec<Strin
 
 /// 从 TMDB production_countries 字段提取国家代码。
 fn production_country_values(value: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
-    let Ok(list) = value.downcast::<PyList>() else {
+    let Ok(list) = value.cast::<PyList>() else {
         return Ok(Vec::new());
     };
     let mut result = Vec::new();
     for item in list.iter() {
-        if let Ok(dict) = item.downcast::<PyDict>() {
+        if let Ok(dict) = item.cast::<PyDict>() {
             if let Some(code) = get_optional_nonempty_string(dict, "iso_3166_1")? {
                 result.push(code.to_uppercase());
             }
@@ -334,7 +334,7 @@ fn pub_minutes_from_py(torrent: &Bound<'_, PyAny>) -> PyResult<f64> {
 }
 
 /// 将规则 AST 转换为 Python 兼容嵌套列表。
-fn expr_to_py(py: Python<'_>, expr: &RuleExpr) -> PyResult<PyObject> {
+fn expr_to_py(py: Python<'_>, expr: &RuleExpr) -> PyResult<Py<PyAny>> {
     match expr {
         RuleExpr::Name(name) => Ok(PyString::new(py, name).into_any().unbind()),
         RuleExpr::Not(inner) => {
@@ -354,7 +354,7 @@ fn expr_binary_to_py(
     operator: &str,
     left: &RuleExpr,
     right: &RuleExpr,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     list.append(expr_to_py(py, left)?)?;
     list.append(operator)?;

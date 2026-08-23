@@ -17,9 +17,9 @@ pub(crate) fn parse_metainfo_fast(
     title: &str,
     subtitle: Option<&str>,
     options: Option<&Bound<'_, PyDict>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let options = parse_options(options)?;
-    let meta = py.allow_threads(|| build_meta_info(title, subtitle, options.as_ref(), true));
+    let meta = py.detach(|| build_meta_info(title, subtitle, options.as_ref(), true));
     meta_to_py(py, &meta)
 }
 
@@ -30,15 +30,15 @@ pub(crate) fn parse_metainfo_path_fast(
     py: Python<'_>,
     path: &str,
     options: Option<&Bound<'_, PyDict>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let options = parse_options(options)?;
-    let meta = py.allow_threads(|| build_meta_path(path, options.as_ref()));
+    let meta = py.detach(|| build_meta_path(path, options.as_ref()));
     meta_to_py(py, &meta)
 }
 
 /// 提取标题中的显式媒体标签，兼容 find_metainfo 原入口。
 #[pyfunction]
-pub(crate) fn find_metainfo_fast(py: Python<'_>, title: &str) -> PyResult<PyObject> {
+pub(crate) fn find_metainfo_fast(py: Python<'_>, title: &str) -> PyResult<Py<PyAny>> {
     let parsed = find_explicit_metainfo(title);
     let result = PyDict::new(py);
     result.set_item("title", parsed.title)?;
@@ -131,7 +131,7 @@ fn parse_streaming_platforms(options: &Bound<'_, PyDict>) -> PyResult<HashMap<St
     if value.is_none() {
         return Ok(result);
     }
-    let dict = value.downcast::<PyDict>()?;
+    let dict = value.cast::<PyDict>()?;
     for (key, value) in dict.iter() {
         let key = key.str()?.to_str()?.to_uppercase();
         let value = value.str()?.to_str()?.to_string();
@@ -143,7 +143,7 @@ fn parse_streaming_platforms(options: &Bound<'_, PyDict>) -> PyResult<HashMap<St
 }
 
 /// 将纯 Rust 元信息转换为 Python 字典。
-fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<PyObject> {
+fn meta_to_py(py: Python<'_>, meta: &MetaResult) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("kind", &meta.kind)?;
     dict.set_item("isfile", meta.isfile)?;
