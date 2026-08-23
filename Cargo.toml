@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["abi3-py311"]
 abi3-py311 = ["pyo3/abi3-py311"]
 abi3-py314 = ["pyo3/abi3-py314"]
+zhconv = ["dep:zhconv"]
 
 [dependencies]
 anitomy-pure = "0.1"
@@ -29,4 +30,4 @@ quick-xml = "0.38"
 regex = "1.11"
 scraper = "0.24"
 url = "2.5"
-zhconv = "0.4.1"
+zhconv = { version = "0.4.1", optional = true }

@@ -304,14 +304,14 @@ jobs:
         with:
           target: ${{ matrix.conf.target }}
           manylinux: ${{ matrix.conf.manylinux }}
-          args: -i python3.14t --release --locked --out dist --compatibility pypi --no-default-features
+          args: -i python3.14t --release --locked --out dist --compatibility pypi --no-default-features --features zhconv
 
       - name: Build wheel (host)
         if: matrix.conf.manylinux == ''
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.conf.target }}
-          args: -i python3.14t --release --locked --out dist --compatibility pypi --no-default-features
+          args: -i python3.14t --release --locked --out dist --compatibility pypi --no-default-features --features zhconv
 
       - name: Upload wheel
         uses: actions/upload-artifact@v7

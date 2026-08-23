@@ -15,6 +15,13 @@ def test_extension_is_available() -> None:
     assert moviepilot_rust.is_available() is True
 
 
+def test_zhconv_feature_matches_runtime_abi() -> None:
+    """中文转换只进入 free-threaded 制品，避免增加标准 wheel 体积。"""
+    is_free_threaded = sysconfig.get_config_var("Py_GIL_DISABLED") == 1
+
+    assert hasattr(moviepilot_rust, "zhconv_fast") is is_free_threaded
+
+
 @pytest.mark.skipif(
     sysconfig.get_config_var("Py_GIL_DISABLED") != 1,
     reason="requires a free-threaded Python build",

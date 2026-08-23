@@ -46,7 +46,7 @@ jobs:
           - python-version: "3.14"
             maturin_args: "--no-default-features --features abi3-py314"
           - python-version: "3.14t"
-            maturin_args: "--no-default-features"
+            maturin_args: "--no-default-features --features zhconv"
     steps:
       - uses: actions/checkout@v6
 
