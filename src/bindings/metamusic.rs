@@ -10,13 +10,13 @@ pub(crate) fn parse_metamusic_fast(
     title: &str,
     artists: Option<Vec<String>>,
     year: Option<i64>,
-) -> PyResult<PyObject> {
-    let parsed = py.allow_threads(|| parse_music_title(title, artists.unwrap_or_default(), year));
+) -> PyResult<Py<PyAny>> {
+    let parsed = py.detach(|| parse_music_title(title, artists.unwrap_or_default(), year));
     music_meta_to_py(py, &parsed)
 }
 
 /// 将纯 Rust 音乐解析结果转换为 Python 字典。
-fn music_meta_to_py(py: Python<'_>, meta: &MusicMetaResult) -> PyResult<PyObject> {
+fn music_meta_to_py(py: Python<'_>, meta: &MusicMetaResult) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("title", &meta.title)?;
     dict.set_item("artists", &meta.artists)?;

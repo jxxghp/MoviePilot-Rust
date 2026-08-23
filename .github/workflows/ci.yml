@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -18,17 +18,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-
-      - name: Create project environment
-        run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install "maturin>=1.9,<2" pytest
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -36,11 +31,37 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Install extension
-        run: .venv/bin/python -m maturin develop
-
       - name: Run Rust unit tests
         run: cargo test --lib
+
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.14"
+          - "3.14t"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Create project environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install "maturin>=1.9,<2" pytest
+
+      - name: Install extension
+        run: .venv/bin/python -m maturin develop
 
       - name: Run Python unit tests
         run: .venv/bin/python -m pytest -q

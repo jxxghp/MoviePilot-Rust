@@ -70,7 +70,7 @@ pub(crate) fn get_config_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyR
     if value.is_none() {
         return Ok(Vec::new());
     }
-    if let Ok(list) = value.downcast::<PyList>() {
+    if let Ok(list) = value.cast::<PyList>() {
         let mut result = Vec::new();
         for item in list.iter() {
             let text = item.extract::<String>()?;
@@ -143,7 +143,7 @@ pub(crate) fn py_any_to_string_list(value: &Bound<'_, PyAny>) -> PyResult<Vec<St
     if value.is_none() {
         return Ok(Vec::new());
     }
-    if let Ok(list) = value.downcast::<PyList>() {
+    if let Ok(list) = value.cast::<PyList>() {
         let mut result = Vec::new();
         for item in list.iter() {
             let text = item.str()?.to_str()?.to_string();
