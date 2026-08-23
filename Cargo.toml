@@ -12,6 +12,11 @@ exclude = ["/.venv", "/dist", "/target"]
 name = "moviepilot_rust"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["abi3-py311"]
+abi3-py311 = ["pyo3/abi3-py311"]
+abi3-py314 = ["pyo3/abi3-py314"]
+
 [dependencies]
 anitomy-pure = "0.1"
 fancy-regex = "0.18"
@@ -19,7 +24,7 @@ inputx-pinyin = "1.0.2"
 minijinja = "2.20"
 chrono = "0.4"
 once_cell = "1.20"
-pyo3 = { version = "0.29.2", features = ["abi3-py311", "extension-module"] }
+pyo3 = { version = "0.29.2", features = ["extension-module"] }
 quick-xml = "0.38"
 regex = "1.11"
 scraper = "0.24"
