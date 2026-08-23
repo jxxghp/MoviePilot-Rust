@@ -52,5 +52,6 @@ fn moviepilot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(bindings::rss::parse_rss_items_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::zhconv::zhconv_fast, m)?)?;
     Ok(())
 }
