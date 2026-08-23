@@ -44,6 +44,7 @@ fn moviepilot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
         bindings::indexer::parse_indexer_subtitles_fast,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(bindings::jieba::jieba_cut, m)?)?;
     m.add_function(wrap_pyfunction!(
         bindings::metainfo::parse_metainfo_fast,
         m
