@@ -8,6 +8,15 @@ mod support;
 
 use pyo3::prelude::*;
 
+#[cfg(all(feature = "abi3-py311", feature = "abi3-py314"))]
+compile_error!("abi3-py311 and abi3-py314 cannot be enabled together");
+
+#[cfg(all(
+    feature = "zhconv",
+    any(feature = "abi3-py311", feature = "abi3-py314")
+))]
+compile_error!("zhconv is only available in the free-threaded wheel");
+
 /// 返回扩展是否已成功加载，用于 Python 侧健康检查。
 #[pyfunction]
 fn is_available() -> bool {
@@ -35,6 +44,7 @@ fn moviepilot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
         bindings::indexer::parse_indexer_subtitles_fast,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(bindings::jieba::jieba_cut, m)?)?;
     m.add_function(wrap_pyfunction!(
         bindings::metainfo::parse_metainfo_fast,
         m
@@ -49,5 +59,7 @@ fn moviepilot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(bindings::rss::parse_rss_items_fast, m)?)?;
+    #[cfg(feature = "zhconv")]
+    m.add_function(wrap_pyfunction!(bindings::zhconv::zhconv_fast, m)?)?;
     Ok(())
 }

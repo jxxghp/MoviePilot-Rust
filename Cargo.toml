@@ -1,6 +1,6 @@
 [package]
 name = "moviepilot-rust"
-version = "0.2.9"
+version = "0.3.0"
 edition = "2021"
 description = "Rust acceleration helpers for MoviePilot"
 license = "GPL-3.0-or-later"
@@ -12,15 +12,23 @@ exclude = ["/.venv", "/dist", "/target"]
 name = "moviepilot_rust"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["abi3-py311"]
+abi3-py311 = ["pyo3/abi3-py311"]
+abi3-py314 = ["pyo3/abi3-py314"]
+zhconv = ["dep:zhconv"]
+
 [dependencies]
 anitomy-pure = "0.1"
 fancy-regex = "0.18"
 inputx-pinyin = "1.0.2"
+jieba-rs = "0.10.3"
 minijinja = "2.20"
 chrono = "0.4"
 once_cell = "1.20"
-pyo3 = { version = "0.29.2", features = ["abi3-py311", "extension-module"] }
+pyo3 = { version = "0.29.2", features = ["extension-module"] }
 quick-xml = "0.38"
 regex = "1.11"
 scraper = "0.24"
 url = "2.5"
+zhconv = { version = "0.4.1", optional = true }

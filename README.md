@@ -98,7 +98,7 @@ dist/moviepilot_rust-x.x.x.tar.gz
 
 ## 发布
 
-更新 `Cargo.toml` 中的 package version 并推送到 `v3` 后，GitHub Actions 会自动创建对应的 `v版本号` Release，构建 Linux（glibc/musl）、macOS、Windows wheel 并发布到 PyPI；发布成功后还会向 [MoviePilot](https://github.com/jxxghp/MoviePilot) 的 `v3` 分支提交 bump `requirements.in` 的 PR（需配置 `MOVIEPILOT_REPO_TOKEN`）。
+更新 `Cargo.toml` 中的 package version 并推送到 `v3` 后，GitHub Actions 会自动创建对应的 `v版本号` Release，构建 Linux（glibc/musl）、macOS、Windows wheel 并发布到 PyPI；发布成功后还会向 [MoviePilot](https://github.com/jxxghp/MoviePilot) 的 `v3` 分支提交更新 `pyproject.toml` 与 `uv.lock` 的 PR（需配置 `MOVIEPILOT_REPO_TOKEN`）。
 
 ```shell
 # 修改 Cargo.toml 中的 version = "x.x.x"

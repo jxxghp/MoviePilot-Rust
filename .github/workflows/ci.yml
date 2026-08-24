@@ -40,10 +40,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          - "3.11"
-          - "3.14"
-          - "3.14t"
+        include:
+          - python-version: "3.11"
+            maturin_args: ""
+          - python-version: "3.14"
+            maturin_args: "--no-default-features --features abi3-py314"
+          - python-version: "3.14t"
+            maturin_args: "--no-default-features --features zhconv"
     steps:
       - uses: actions/checkout@v6
 
@@ -61,7 +64,7 @@ jobs:
           .venv/bin/python -m pip install "maturin>=1.9,<2" pytest
 
       - name: Install extension
-        run: .venv/bin/python -m maturin develop
+        run: .venv/bin/python -m maturin develop ${{ matrix.maturin_args }}
 
       - name: Run Python unit tests
         run: .venv/bin/python -m pytest -q
