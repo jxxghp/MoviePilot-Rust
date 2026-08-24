@@ -372,7 +372,7 @@ jobs:
             echo "moviepilot-rust entry not found in pyproject.toml" >&2
             exit 1
           fi
-          uv add --no-sync "${target}"
+          uv add --no-sync --refresh-package moviepilot-rust "${target}"
           uv lock --check
           echo "changed=true" >> "$GITHUB_OUTPUT"
           grep '"moviepilot-rust~=' pyproject.toml
