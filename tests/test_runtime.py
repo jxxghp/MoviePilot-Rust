@@ -16,10 +16,10 @@ def test_extension_is_available() -> None:
 
 
 def test_zhconv_feature_matches_runtime_abi() -> None:
-    """中文转换只进入 free-threaded 制品，避免增加标准 wheel 体积。"""
-    is_free_threaded = sysconfig.get_config_var("Py_GIL_DISABLED") == 1
+    """中文转换进入 V3 的 3.14 标准与 free-threaded 制品。"""
+    is_v3_runtime = sys.version_info >= (3, 14)
 
-    assert hasattr(moviepilot_rust, "zhconv_fast") is is_free_threaded
+    assert hasattr(moviepilot_rust, "zhconv_fast") is is_v3_runtime
 
 
 @pytest.mark.skipif(
