@@ -4,7 +4,7 @@ MoviePilot Rust 加速模块。
 
 - PyPI 包名：`moviepilot-rust`
 - Python 导入名：`moviepilot_rust`
-- 支持版本：Python 3.11+
+- 支持版本：Python 3.14+
 - 构建工具：PyO3 + maturin
 
 ## 项目结构
@@ -28,7 +28,7 @@ src/
 在本仓库根目录创建 `.venv`，并把 Rust 扩展直接安装到这个虚拟环境：
 
 ```shell
-python3 -m venv .venv
+python3.14 -m venv .venv
 .venv/bin/python -m pip install "maturin>=1.9,<2"
 .venv/bin/python -m maturin develop --release
 ```
@@ -64,7 +64,7 @@ scripts/build_wheels.sh
 产物会输出到 `dist/`，例如：
 
 ```text
-dist/moviepilot_rust-x.x.x-cp311-abi3-macosx_11_0_arm64.whl
+dist/moviepilot_rust-x.x.x-cp314-abi3-macosx_11_0_arm64.whl
 dist/moviepilot_rust-x.x.x.tar.gz
 ```
 

@@ -118,16 +118,10 @@ jobs:
       matrix:
         python:
           - {
-              version: "3.11",
-              interpreter: python3.11,
-              label: legacy,
-              maturin_args: "",
-            }
-          - {
               version: "3.14",
               interpreter: python3.14,
               label: py314,
-              maturin_args: "--no-default-features --features abi3-py314",
+              maturin_args: "",
             }
         conf:
           - {

@@ -13,8 +13,7 @@ name = "moviepilot_rust"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["abi3-py311"]
-abi3-py311 = ["pyo3/abi3-py311"]
+default = ["abi3-py314"]
 abi3-py314 = ["pyo3/abi3-py314", "zhconv"]
 zhconv = ["dep:zhconv"]
 
