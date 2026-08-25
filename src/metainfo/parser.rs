@@ -561,6 +561,10 @@ fn parse_anime(
         .and_then(|elements| first_element(elements, Category::ReleaseGroup));
     let matched_release_group =
         match_release_group(&original_title, options.release_group_regex.as_ref());
+    let preferred_release_group = matched_release_group
+        .clone()
+        .or_else(|| preferred_leading_anime_release_group(&original_title))
+        .or_else(|| origin_release_group.clone());
 
     if let Some(elements) = parsed.as_ref() {
         let mut name = first_element(elements, Category::AnimeTitle);
@@ -694,7 +698,7 @@ fn parse_anime(
         }
         meta.resource_pix =
             first_element(elements, Category::VideoResolution).and_then(normalize_resource_pix);
-        meta.resource_team = matched_release_group.or(origin_release_group);
+        meta.resource_team = preferred_release_group;
         meta.customization =
             match_customization(&original_title, options.customization_regex.as_ref());
         meta.video_encode = first_element(elements, Category::VideoTerm);
@@ -2217,6 +2221,24 @@ fn clear_parsed_title_for_parent_merge(meta: &mut MetaResult) {
     meta.original_name = None;
 }
 
+/// anitomy-pure 对连续分类方括号可能把第二段识别为发布组；带连接符的首段更接近字幕组命名。
+fn preferred_leading_anime_release_group(title: &str) -> Option<String> {
+    let candidate = FIRST_BRACKET_RE
+        .captures(title)
+        .and_then(|captures| captures.get(1))?
+        .as_str()
+        .trim();
+    if !candidate.contains(['-', '@'])
+        || !candidate.chars().any(|ch| ch.is_ascii_alphabetic())
+        || !candidate
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '@'))
+    {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
 /// 合并父目录元信息。
 fn merge_meta(target: &mut MetaResult, source: &MetaResult) {
     if target.media_type == MEDIA_TYPE_UNKNOWN && source.media_type != MEDIA_TYPE_UNKNOWN {
@@ -2247,6 +2269,7 @@ fn merge_meta(target: &mut MetaResult, source: &MetaResult) {
     fill_option(&mut target.resource_team, &source.resource_team);
     fill_option(&mut target.customization, &source.customization);
     fill_option(&mut target.resource_effect, &source.resource_effect);
+    fill_option(&mut target.web_source, &source.web_source);
     fill_option(&mut target.video_encode, &source.video_encode);
     fill_option(&mut target.video_bit, &source.video_bit);
     fill_option(&mut target.audio_encode, &source.audio_encode);
@@ -2260,12 +2283,15 @@ fn merge_meta(target: &mut MetaResult, source: &MetaResult) {
     if target.doubanid.is_none() {
         target.doubanid = source.doubanid.clone();
     }
-    if target.media_source.is_none() {
+    // 来源与 ID 是同一个身份，不能从不同目录层级分别补值后拼成无效组合。
+    if (target.media_source.is_none() || target.media_id.is_none())
+        && source.media_source.is_some()
+        && source.media_id.is_some()
+    {
         target.media_source = source.media_source;
-    }
-    if target.media_id.is_none() {
         target.media_id = source.media_id.clone();
     }
+    fill_option(&mut target.episode_group, &source.episode_group);
 }
 
 /// 若目标字段为空则使用来源字段。
@@ -2478,22 +2504,21 @@ fn match_release_group(title: &str, regex: Option<&Regex>) -> Option<String> {
     let mut search_start = 0;
     while search_start < title.len() {
         let remainder = &title[search_start..];
-        let Some(matched) = regex.find(remainder) else {
+        let Some(cap) = regex.captures(remainder) else {
             break;
+        };
+        let Some(matched) = cap.get(0) else {
+            search_start += 1;
+            continue;
         };
         let matched_start = search_start + matched.start();
         let matched_end = search_start + matched.end();
-        let matched_text = &title[matched_start..matched_end];
-        let Some(cap) = regex.captures(matched_text) else {
-            search_start = matched_end;
-            continue;
-        };
         if let Some(item) = cap.get(2) {
             let value = item.as_str().to_string();
             if !unique.contains(&value) {
                 unique.push(value);
             }
-            search_start = matched_start + item.end();
+            search_start += item.end();
         } else {
             search_start = matched_end;
         }
@@ -2549,10 +2574,12 @@ fn match_customization(title: &str, regex: Option<&Regex>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_meta_info, build_release_group_regex, find_explicit_metainfo, match_release_group,
+        build_meta_info, build_meta_path, build_release_group_regex, find_explicit_metainfo,
+        match_release_group, merge_meta,
     };
-    use crate::metainfo::model::MediaSource;
+    use crate::metainfo::model::{MediaSource, MetaResult};
     use crate::metainfo::ParseOptions;
+    use std::collections::HashMap;
 
     /// 通用媒体身份字段不是自定义识别词语法，不能形成媒体身份。
     #[test]
@@ -2675,6 +2702,52 @@ mod tests {
             let parsed = build_meta_info(title, None, &options, true);
             assert_eq!(parsed.resource_type.as_deref(), Some(expected), "{title}");
         }
+    }
+
+    /// 连续动漫标签中带连接符的首段发布组应优先于分类标签。
+    #[test]
+    fn prefers_leading_anime_release_group() {
+        let options = ParseOptions::empty();
+        let parsed = build_meta_info(
+            "[GM-Team][国漫][寻剑 第1季][Sword Quest Season 1][2002][02][AVC][GB][1080P]",
+            None,
+            &options,
+            true,
+        );
+
+        assert_eq!(parsed.resource_team.as_deref(), Some("GM-Team"));
+    }
+
+    /// 路径合并应补齐父目录平台字段，并保持媒体身份来源和 ID 成对继承。
+    #[test]
+    fn merges_stable_path_contract_fields() {
+        let options = ParseOptions::cached(
+            Vec::new(),
+            vec![".mkv".to_string()],
+            String::new(),
+            Vec::new(),
+            HashMap::from([("AMZN".to_string(), "Amazon".to_string())]),
+        );
+        let parsed = build_meta_path("/Show 2024 AMZN WEB-DL/Show.S01E01.mkv", &options);
+
+        assert_eq!(parsed.web_source.as_deref(), Some("Amazon"));
+
+        let mut target = MetaResult {
+            media_source: Some(MediaSource::TheMovieDb),
+            media_id: None,
+            ..MetaResult::default()
+        };
+        let source = MetaResult {
+            media_source: Some(MediaSource::Bangumi),
+            media_id: Some("400602".to_string()),
+            episode_group: Some("group".to_string()),
+            ..MetaResult::default()
+        };
+        merge_meta(&mut target, &source);
+
+        assert_eq!(target.media_source, Some(MediaSource::Bangumi));
+        assert_eq!(target.media_id.as_deref(), Some("400602"));
+        assert_eq!(target.episode_group.as_deref(), Some("group"));
     }
 
     /// 发布组只能在约定的分隔符后识别，标题首词不得参与发布组拼接。

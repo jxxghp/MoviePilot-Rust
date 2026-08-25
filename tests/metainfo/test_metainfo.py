@@ -62,8 +62,9 @@ def _target_from_parsed(parsed, expected):
     }
     if "fps" not in expected:
         target.pop("fps", None)
-    if expected.get("tmdbid"):
-        target["tmdbid"] = parsed.get("tmdbid")
+    if expected.get("media_source"):
+        target["media_source"] = parsed.get("media_source")
+        target["media_id"] = parsed.get("media_id")
     return target
 
 
