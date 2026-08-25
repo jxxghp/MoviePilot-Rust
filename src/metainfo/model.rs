@@ -79,15 +79,49 @@ pub(super) struct TokenCursor {
     pub(super) index: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum VideoTokenKind {
+    EnglishName,
+    ChineseName,
+    NameSeasonWord,
+    Part,
+    Year,
+    Pix,
+    Season,
+    SeasonMarker,
+    Episode,
+    EpisodeMarker,
+    Source,
+    Effect,
+    VideoEncode,
+    VideoBit,
+    AudioEncode,
+    Fps,
+}
+
 #[derive(Default)]
 pub(super) struct VideoState {
-    pub(super) source: Vec<String>,
-    pub(super) effect: Vec<String>,
-    pub(super) index: usize,
-    pub(super) stop_name_flag: bool,
-    pub(super) stop_cnname_flag: bool,
+    pub(super) sources: Vec<String>,
+    pub(super) effects: Vec<String>,
+    pub(super) token_index: usize,
+    pub(super) stop_name: bool,
+    pub(super) stop_cn_name: bool,
     pub(super) last_token: String,
-    pub(super) last_token_type: String,
-    pub(super) continue_flag: bool,
-    pub(super) unknown_name_str: String,
+    pub(super) last_kind: Option<VideoTokenKind>,
+    pub(super) pending_name: String,
+}
+
+impl VideoState {
+    /// 进入下一个由解析管线处理的词元。
+    pub(super) fn advance(&mut self) {
+        self.token_index += 1;
+    }
+
+    /// 原子更新后续规则依赖的上一词元类型和值。
+    pub(super) fn remember(&mut self, kind: VideoTokenKind, token: Option<String>) {
+        self.last_kind = Some(kind);
+        if let Some(token) = token {
+            self.last_token = token;
+        }
+    }
 }

@@ -1,5 +1,7 @@
 use super::custom_words::prepare_words;
-use super::model::{ExplicitMetaInfo, MediaSource, MetaResult, TokenCursor, VideoState};
+use super::model::{
+    ExplicitMetaInfo, MediaSource, MetaResult, TokenCursor, VideoState, VideoTokenKind,
+};
 use super::options::ParseOptions;
 use super::patterns::*;
 use super::regex::Regex;
@@ -386,10 +388,7 @@ fn parse_video(
         return meta;
     }
     let original_title = title.to_string();
-    let mut state = VideoState {
-        continue_flag: true,
-        ..VideoState::default()
-    };
+    let mut state = VideoState::default();
 
     if isfile && title.chars().all(|ch| ch.is_ascii_digit()) && title.len() < 5 {
         meta.begin_episode = title.parse::<i64>().ok();
@@ -430,57 +429,24 @@ fn parse_video(
     let mut tokens = TokenCursor::new(&working_title);
     let mut token = tokens.get_next();
     while let Some(current) = token {
-        state.index += 1;
-        init_part(&mut meta, &mut state, &current, &mut tokens);
-        if state.continue_flag {
-            init_name(&mut meta, &mut state, &current, &options.media_exts);
-        }
-        if state.continue_flag {
-            init_year(&mut meta, &mut state, &current);
-        }
-        if state.continue_flag {
-            init_resource_pix(&mut meta, &mut state, &current);
-        }
-        if state.continue_flag {
-            init_season(&mut meta, &mut state, &current, isfile);
-        }
-        if state.continue_flag {
-            init_episode(&mut meta, &mut state, &current, isfile);
-        }
-        if state.continue_flag {
-            init_resource_type(&mut meta, &mut state, &current);
-        }
-        if state.continue_flag {
-            init_web_source(
-                &mut meta,
-                &mut state,
-                &current,
-                &mut tokens,
-                &options.streaming_platforms,
-            );
-        }
-        if state.continue_flag {
-            init_video_encode(&mut meta, &mut state, &current);
-        }
-        if state.continue_flag {
-            init_video_bit(&mut meta, &mut state, &current);
-        }
-        if state.continue_flag {
-            init_audio_encode(&mut meta, &mut state, &current);
-        }
-        if state.continue_flag {
-            init_fps(&mut meta, &mut state, &current);
-        }
+        state.advance();
+        parse_video_token(
+            &mut meta,
+            &mut state,
+            &current,
+            &mut tokens,
+            isfile,
+            options,
+        );
         token = tokens.get_next();
-        state.continue_flag = true;
     }
 
-    if !state.effect.is_empty() {
-        state.effect.reverse();
-        meta.resource_effect = Some(state.effect.join(" "));
+    if !state.effects.is_empty() {
+        state.effects.reverse();
+        meta.resource_effect = Some(state.effects.join(" "));
     }
-    if !state.source.is_empty() {
-        meta.resource_type = Some(state.source.join(" "));
+    if !state.sources.is_empty() {
+        meta.resource_type = Some(state.sources.join(" "));
     }
     if meta
         .resource_type
@@ -536,6 +502,51 @@ fn parse_video(
         meta.video_bit = extract_video_bit(meta.video_encode.as_deref().unwrap_or_default());
     }
     meta
+}
+
+/// 按固定优先级处理单个词元，首个命中的阶段终止后续识别。
+fn parse_video_token(
+    meta: &mut MetaResult,
+    state: &mut VideoState,
+    token: &str,
+    tokens: &mut TokenCursor,
+    isfile: bool,
+    options: &ParseOptions,
+) {
+    if init_part(meta, state, token, tokens) {
+        return;
+    }
+    if init_name(meta, state, token, &options.media_exts) {
+        return;
+    }
+    if init_year(meta, state, token) {
+        return;
+    }
+    if init_resource_pix(meta, state, token) {
+        return;
+    }
+    if init_season(meta, state, token, isfile) {
+        return;
+    }
+    if init_episode(meta, state, token, isfile) {
+        return;
+    }
+    if init_resource_type(meta, state, token) {
+        return;
+    }
+    if init_web_source(meta, state, token, tokens, &options.streaming_platforms) {
+        return;
+    }
+    if init_video_encode(meta, state, token) {
+        return;
+    }
+    if init_video_bit(meta, state, token) {
+        return;
+    }
+    if init_audio_encode(meta, state, token) {
+        return;
+    }
+    init_fps(meta, state, token);
 }
 
 /// 解析动漫标题。
@@ -876,42 +887,41 @@ fn init_name(
     state: &mut VideoState,
     token: &str,
     media_exts: &HashSet<String>,
-) {
+) -> bool {
     if token.is_empty() {
-        return;
+        return false;
     }
-    if !state.unknown_name_str.is_empty() {
+    if !state.pending_name.is_empty() {
         if meta.cn_name.is_none() {
             if meta.en_name.is_none() {
-                meta.en_name = Some(state.unknown_name_str.clone());
-            } else if Some(state.unknown_name_str.as_str()) != meta.year.as_deref() {
+                meta.en_name = Some(state.pending_name.clone());
+            } else if Some(state.pending_name.as_str()) != meta.year.as_deref() {
                 meta.en_name = Some(format!(
                     "{} {}",
                     meta.en_name.clone().unwrap_or_default(),
-                    state.unknown_name_str
+                    state.pending_name
                 ));
             }
-            state.last_token_type = "enname".to_string();
+            state.remember(VideoTokenKind::EnglishName, None);
         }
-        state.unknown_name_str.clear();
+        state.pending_name.clear();
     }
-    if state.stop_name_flag {
-        return;
+    if state.stop_name {
+        return false;
     }
     if token.eq_ignore_ascii_case("AKA") {
-        state.continue_flag = false;
-        state.stop_name_flag = true;
-        return;
+        state.stop_name = true;
+        return true;
     }
     if ["共", "第", "季", "集", "话", "話", "期"].contains(&token) {
-        state.last_token_type = "name_se_words".to_string();
-        return;
+        state.remember(VideoTokenKind::NameSeasonWord, None);
+        return false;
     }
     if is_chinese(token) {
-        state.last_token_type = "cnname".to_string();
+        state.remember(VideoTokenKind::ChineseName, None);
         if meta.cn_name.is_none() {
             meta.cn_name = Some(token.to_string());
-        } else if !state.stop_cnname_flag {
+        } else if !state.stop_cn_name {
             if NAME_MOVIE_WORDS_PATTERN.is_match(token)
                 || (!NAME_NO_CHINESE_PATTERN.is_match(token)
                     && !["共", "第", "季", "集", "话", "話", "期"]
@@ -924,50 +934,50 @@ fn init_name(
                     token
                 ));
             }
-            state.stop_cnname_flag = true;
+            state.stop_cn_name = true;
         }
-        return;
+        return false;
     }
     let is_roman_digit =
         token.chars().any(|ch| "MDCLXVI".contains(ch)) && ROMAN_NUMERALS_PATTERN.is_match(token);
     if token.chars().all(|ch| ch.is_ascii_digit()) || is_roman_digit {
-        if state.last_token_type == "name_se_words" {
-            return;
+        if state.last_kind == Some(VideoTokenKind::NameSeasonWord) {
+            return false;
         }
         if meta_name(meta).is_some() {
             if token.starts_with('0') {
-                return;
+                return false;
             }
             if token.chars().all(|ch| ch.is_ascii_digit())
-                && state.last_token_type == "cnname"
+                && state.last_kind == Some(VideoTokenKind::ChineseName)
                 && token
                     .parse::<i64>()
                     .ok()
                     .filter(|value| *value < 1900)
                     .is_some()
             {
-                return;
+                return false;
             }
             if (token.chars().all(|ch| ch.is_ascii_digit()) && token.len() < 4) || is_roman_digit {
-                if state.last_token_type == "cnname" {
+                if state.last_kind == Some(VideoTokenKind::ChineseName) {
                     meta.cn_name = Some(format!(
                         "{} {}",
                         meta.cn_name.clone().unwrap_or_default(),
                         token
                     ));
-                } else if state.last_token_type == "enname" {
+                } else if state.last_kind == Some(VideoTokenKind::EnglishName) {
                     meta.en_name = Some(format!(
                         "{} {}",
                         meta.en_name.clone().unwrap_or_default(),
                         token
                     ));
                 }
-                state.continue_flag = false;
-            } else if token.len() == 4 && state.unknown_name_str.is_empty() {
-                state.unknown_name_str = token.to_string();
+                return true;
+            } else if token.len() == 4 && state.pending_name.is_empty() {
+                state.pending_name = token.to_string();
             }
-        } else if state.unknown_name_str.is_empty() {
-            state.unknown_name_str = token.to_string();
+        } else if state.pending_name.is_empty() {
+            state.pending_name = token.to_string();
         }
     } else if SEASON_PATTERN.is_match(token) {
         if meta
@@ -978,29 +988,35 @@ fn init_name(
         {
             meta.en_name = Some(format!("{} ", meta.en_name.clone().unwrap_or_default()));
         }
-        state.stop_name_flag = true;
+        state.stop_name = true;
     } else if EPISODE_PATTERN.is_match(token)
         || RESOURCES_TYPE_PATTERN.is_match(token)
         || RESOURCES_PIX_PATTERN.is_match(token)
     {
-        state.stop_name_flag = true;
+        state.stop_name = true;
     } else {
         if media_exts.contains(&format!(".{}", token.to_lowercase())) {
-            return;
+            return false;
         }
         if let Some(name) = meta.en_name.as_mut() {
             *name = format!("{name} {token}");
         } else {
             meta.en_name = Some(token.to_string());
         }
-        state.last_token_type = "enname".to_string();
+        state.remember(VideoTokenKind::EnglishName, None);
     }
+    false
 }
 
 /// 识别 Part/Cd/Dvd 等分段。
-fn init_part(meta: &mut MetaResult, state: &mut VideoState, token: &str, tokens: &mut TokenCursor) {
+fn init_part(
+    meta: &mut MetaResult,
+    state: &mut VideoState,
+    token: &str,
+    tokens: &mut TokenCursor,
+) -> bool {
     if meta_name(meta).is_none() {
-        return;
+        return false;
     }
     if meta.year.is_none()
         && meta.begin_season.is_none()
@@ -1008,7 +1024,7 @@ fn init_part(meta: &mut MetaResult, state: &mut VideoState, token: &str, tokens:
         && meta.resource_pix.is_none()
         && meta.resource_type.is_none()
     {
-        return;
+        return false;
     }
     if let Some(cap) = PART_PATTERN.captures(token) {
         if meta.part.is_none() {
@@ -1028,23 +1044,24 @@ fn init_part(meta: &mut MetaResult, state: &mut VideoState, token: &str, tokens:
                 tokens.get_next();
             }
         }
-        state.last_token_type = "part".to_string();
-        state.continue_flag = false;
+        state.remember(VideoTokenKind::Part, None);
+        return true;
     }
+    false
 }
 
 /// 识别年份。
-fn init_year(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_year(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none() || !token.chars().all(|ch| ch.is_ascii_digit()) || token.len() != 4
     {
-        return;
+        return false;
     }
     let Some(year) = token
         .parse::<i64>()
         .ok()
         .filter(|value| *value > 1900 && *value < 2050)
     else {
-        return;
+        return false;
     };
     if let Some(existing) = meta.year.clone() {
         if let Some(en_name) = meta.en_name.as_mut() {
@@ -1061,20 +1078,19 @@ fn init_year(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
         meta.en_name = Some(format!("{} ", meta.en_name.clone().unwrap_or_default()));
     }
     meta.year = Some(year.to_string());
-    state.last_token_type = "year".to_string();
-    state.continue_flag = false;
-    state.stop_name_flag = true;
+    state.remember(VideoTokenKind::Year, None);
+    state.stop_name = true;
+    true
 }
 
 /// 识别分辨率。
-fn init_resource_pix(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_resource_pix(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none() {
-        return;
+        return false;
     }
     if let Some(cap) = RESOURCES_PIX_PATTERN.captures(token) {
-        state.last_token_type = "pix".to_string();
-        state.continue_flag = false;
-        state.stop_name_flag = true;
+        state.remember(VideoTokenKind::Pix, None);
+        state.stop_name = true;
         if meta.resource_pix.is_none() {
             let value = cap
                 .get(1)
@@ -1087,24 +1103,26 @@ fn init_resource_pix(meta: &mut MetaResult, state: &mut VideoState, token: &str)
                 item
             });
         }
+        true
     } else if let Some(cap) = RESOURCES_PIX_PATTERN2.captures(token) {
-        state.last_token_type = "pix".to_string();
-        state.continue_flag = false;
-        state.stop_name_flag = true;
+        state.remember(VideoTokenKind::Pix, None);
+        state.stop_name = true;
         if meta.resource_pix.is_none() {
             meta.resource_pix = cap.get(1).map(|item| item.as_str().to_lowercase());
         }
+        true
+    } else {
+        false
     }
 }
 
 /// 识别季。
-fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) {
+fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) -> bool {
     let mut captures = SEASON_PATTERN.captures_iter(token).peekable();
     if captures.peek().is_some() {
-        state.last_token_type = "season".to_string();
+        state.remember(VideoTokenKind::Season, None);
         meta.media_type = MEDIA_TYPE_TV.to_string();
-        state.stop_name_flag = true;
-        state.continue_flag = true;
+        state.stop_name = true;
         for cap in captures {
             let value = (1..=3).find_map(|index| {
                 cap.get(index)
@@ -1126,29 +1144,38 @@ fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfil
                 }
             }
         }
+        false
     } else if token.chars().all(|ch| ch.is_ascii_digit()) {
-        if state.last_token_type == "SEASON" && meta.begin_season.is_none() && token.len() < 3 {
+        if state.last_kind == Some(VideoTokenKind::SeasonMarker)
+            && meta.begin_season.is_none()
+            && token.len() < 3
+        {
             meta.begin_season = token.parse::<i64>().ok();
             meta.total_season = 1;
-            state.last_token_type = "season".to_string();
-            state.stop_name_flag = true;
-            state.continue_flag = false;
+            state.remember(VideoTokenKind::Season, None);
+            state.stop_name = true;
             meta.media_type = MEDIA_TYPE_TV.to_string();
+            true
+        } else {
+            false
         }
     } else if token.eq_ignore_ascii_case("SEASON") && meta.begin_season.is_none() {
-        state.last_token_type = "SEASON".to_string();
+        state.remember(VideoTokenKind::SeasonMarker, None);
+        false
     } else if meta.media_type == MEDIA_TYPE_TV && meta.begin_season.is_none() {
         meta.begin_season = Some(1);
+        false
+    } else {
+        false
     }
 }
 
 /// 识别集。
-fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) {
+fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) -> bool {
     let mut captures = EPISODE_PATTERN.captures_iter(token).peekable();
     if captures.peek().is_some() {
-        state.last_token_type = "episode".to_string();
-        state.continue_flag = false;
-        state.stop_name_flag = true;
+        state.remember(VideoTokenKind::Episode, None);
+        state.stop_name = true;
         meta.media_type = MEDIA_TYPE_TV.to_string();
         for cap in captures {
             let value = (1..=4).find_map(|index| {
@@ -1171,13 +1198,14 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
                 }
             }
         }
+        true
     } else if token.chars().all(|ch| ch.is_ascii_digit()) {
         let value = token.parse::<i64>().ok();
         if meta.begin_episode.is_some()
             && meta.end_episode.is_none()
             && token.len() < 5
             && value.unwrap_or_default() > meta.begin_episode.unwrap_or_default()
-            && state.last_token_type == "episode"
+            && state.last_kind == Some(VideoTokenKind::Episode)
         {
             meta.end_episode = value;
             meta.total_episode =
@@ -1186,27 +1214,32 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
                 meta.end_episode = None;
                 meta.total_episode = 1;
             }
-            state.continue_flag = false;
             meta.media_type = MEDIA_TYPE_TV.to_string();
+            true
         } else if (meta.begin_episode.is_none()
             && token.len() > 1
             && token.len() < 4
-            && state.last_token_type != "year"
-            && state.last_token_type != "videoencode"
-            && token != state.unknown_name_str)
-            || (state.last_token_type == "EPISODE"
+            && state.last_kind != Some(VideoTokenKind::Year)
+            && state.last_kind != Some(VideoTokenKind::VideoEncode)
+            && token != state.pending_name)
+            || (state.last_kind == Some(VideoTokenKind::EpisodeMarker)
                 && meta.begin_episode.is_none()
                 && token.len() < 5)
         {
             meta.begin_episode = value;
             meta.total_episode = 1;
-            state.last_token_type = "episode".to_string();
-            state.continue_flag = false;
-            state.stop_name_flag = true;
+            state.remember(VideoTokenKind::Episode, None);
+            state.stop_name = true;
             meta.media_type = MEDIA_TYPE_TV.to_string();
+            true
+        } else {
+            false
         }
     } else if token.eq_ignore_ascii_case("EPISODE") {
-        state.last_token_type = "EPISODE".to_string();
+        state.remember(VideoTokenKind::EpisodeMarker, None);
+        false
+    } else {
+        false
     }
 }
 
@@ -1230,66 +1263,71 @@ fn append_resource_source(state: &mut VideoState, source: &str) {
         _ => source,
     };
     if !state
-        .source
+        .sources
         .iter()
         .any(|item| item.eq_ignore_ascii_case(source_name))
     {
-        state.source.push(source_name.to_string());
+        state.sources.push(source_name.to_string());
     }
 }
 
 /// 将拆分的片源前缀替换为完整规范名称。
 fn replace_last_resource_source(state: &mut VideoState, source: &str, replacement: &str) {
     if state
-        .source
+        .sources
         .last()
         .map(|item| item.eq_ignore_ascii_case(source))
         .unwrap_or(false)
     {
-        state.source.pop();
+        state.sources.pop();
     }
     append_resource_source(state, replacement);
 }
 
 /// 识别片源和特效。
-fn init_resource_type(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_resource_type(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none() {
-        return;
+        return false;
     }
     let upper = token.to_uppercase();
-    if upper == "DL" && state.last_token_type == "source" && state.last_token == "WEB" {
+    if upper == "DL" && state.last_kind == Some(VideoTokenKind::Source) && state.last_token == "WEB"
+    {
         replace_last_resource_source(state, "WEB", "WEB-DL");
-        state.continue_flag = false;
-        return;
+        return true;
     }
-    if upper == "RAY" && state.last_token_type == "source" && state.last_token == "BLU" {
+    if upper == "RAY"
+        && state.last_kind == Some(VideoTokenKind::Source)
+        && state.last_token == "BLU"
+    {
         replace_last_resource_source(state, "BLU", "BluRay");
-        state.continue_flag = false;
-        return;
+        return true;
     }
     if upper == "WEBDL" {
         append_resource_source(state, "WEB-DL");
-        state.continue_flag = false;
-        return;
+        return true;
     }
     if let Some(cap) = SOURCE_PATTERN.captures(token) {
-        state.last_token_type = "source".to_string();
-        state.continue_flag = false;
-        state.stop_name_flag = true;
+        state.stop_name = true;
         if let Some(source) = cap.get(1).map(|item| item.as_str()) {
             append_resource_source(state, source);
-            state.last_token = source.to_uppercase();
+            state.remember(VideoTokenKind::Source, Some(source.to_uppercase()));
+        } else {
+            state.remember(VideoTokenKind::Source, None);
         }
+        true
     } else if let Some(cap) = EFFECT_PATTERN.captures(token) {
-        state.last_token_type = "effect".to_string();
-        state.continue_flag = false;
-        state.stop_name_flag = true;
+        state.stop_name = true;
         if let Some(effect) = cap.get(1).map(|item| item.as_str().to_string()) {
-            if !state.effect.contains(&effect) {
-                state.effect.push(effect.clone());
+            if !state.effects.contains(&effect) {
+                state.effects.push(effect.clone());
             }
-            state.last_token = effect.to_uppercase();
+            state.remember(VideoTokenKind::Effect, Some(effect.to_uppercase()));
+        } else {
+            state.remember(VideoTokenKind::Effect, None);
         }
+        true
+    } else {
+        false
     }
 }
 
@@ -1300,14 +1338,14 @@ fn init_web_source(
     token: &str,
     tokens: &mut TokenCursor,
     streaming_platforms: &HashMap<String, String>,
-) {
+) -> bool {
     if meta_name(meta).is_none() {
-        return;
+        return false;
     }
     let mut platform_name = streaming_platforms.get(&token.to_uppercase()).cloned();
     let mut query_range = 1usize;
     let prev_token = state
-        .index
+        .token_index
         .checked_sub(2)
         .and_then(|idx| tokens.tokens.get(idx))
         .cloned();
@@ -1335,10 +1373,10 @@ fn init_web_source(
         }
     }
     let Some(platform_name) = platform_name else {
-        return;
+        return false;
     };
-    let match_start = state.index.saturating_sub(query_range);
-    let match_end = state.index.saturating_sub(1);
+    let match_start = state.token_index.saturating_sub(query_range);
+    let match_end = state.token_index.saturating_sub(1);
     let start = match_start.saturating_sub(query_range);
     let end = usize::min(tokens.tokens.len(), match_end + 1 + query_range);
     let web_tokens = ["WEB", "DL", "WEBDL", "WEBRIP"];
@@ -1347,12 +1385,14 @@ fn init_web_source(
         .any(|item| web_tokens.contains(&item.to_uppercase().as_str()))
     {
         meta.web_source = Some(platform_name);
-        state.continue_flag = false;
+        true
+    } else {
+        false
     }
 }
 
 /// 识别视频编码。
-fn init_video_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_video_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none()
         || (meta.year.is_none()
             && meta.resource_pix.is_none()
@@ -1360,12 +1400,10 @@ fn init_video_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str)
             && meta.begin_season.is_none()
             && meta.begin_episode.is_none())
     {
-        return;
+        return false;
     }
     if let Some(cap) = VIDEO_ENCODE_PATTERN.captures(token) {
-        state.continue_flag = false;
-        state.stop_name_flag = true;
-        state.last_token_type = "videoencode".to_string();
+        state.stop_name = true;
         if meta.video_encode.is_none() {
             let value = cap
                 .get(2)
@@ -1373,40 +1411,50 @@ fn init_video_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str)
                 .or_else(|| cap.get(3).map(|item| item.as_str().to_lowercase()))
                 .or_else(|| cap.get(1).map(|item| item.as_str().to_uppercase()));
             meta.video_encode = value;
-            state.last_token = meta.video_encode.clone().unwrap_or_default();
+            state.remember(
+                VideoTokenKind::VideoEncode,
+                Some(meta.video_encode.clone().unwrap_or_default()),
+            );
         } else if meta.video_encode.as_deref() == Some("10bit") {
             if let Some(value) = cap.get(1).map(|item| item.as_str().to_uppercase()) {
                 meta.video_encode = Some(format!("{value} 10bit"));
-                state.last_token = value;
+                state.remember(VideoTokenKind::VideoEncode, Some(value));
             }
+        } else {
+            state.remember(VideoTokenKind::VideoEncode, None);
         }
+        true
     } else if ["H", "X"].contains(&token.to_uppercase().as_str()) {
-        state.continue_flag = false;
-        state.stop_name_flag = true;
-        state.last_token_type = "videoencode".to_string();
-        state.last_token = if token.eq_ignore_ascii_case("H") {
+        state.stop_name = true;
+        let last_token = if token.eq_ignore_ascii_case("H") {
             token.to_uppercase()
         } else {
             token.to_lowercase()
         };
-    } else if state.last_token_type == "videoencode"
+        state.remember(VideoTokenKind::VideoEncode, Some(last_token));
+        true
+    } else if state.last_kind == Some(VideoTokenKind::VideoEncode)
         && ((["264", "265"].contains(&token) && ["H", "X"].contains(&state.last_token.as_str()))
             || (token.chars().all(|ch| ch.is_ascii_digit())
                 && ["VC", "MPEG"].contains(&state.last_token.as_str())))
     {
         meta.video_encode = Some(format!("{}{}", state.last_token, token));
+        false
     } else if token.eq_ignore_ascii_case("10BIT") {
-        state.last_token_type = "videoencode".to_string();
+        state.remember(VideoTokenKind::VideoEncode, None);
         meta.video_encode = Some(if let Some(existing) = meta.video_encode.as_ref() {
             format!("{existing} 10bit")
         } else {
             "10bit".to_string()
         });
+        false
+    } else {
+        false
     }
 }
 
 /// 识别视频位深。
-fn init_video_bit(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_video_bit(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none()
         || (meta.year.is_none()
             && meta.resource_pix.is_none()
@@ -1414,20 +1462,22 @@ fn init_video_bit(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
             && meta.begin_season.is_none()
             && meta.begin_episode.is_none())
     {
-        return;
+        return false;
     }
     if let Some(bit) = extract_video_bit(token) {
-        state.continue_flag = false;
-        state.stop_name_flag = true;
-        state.last_token_type = "videobit".to_string();
+        state.stop_name = true;
+        state.remember(VideoTokenKind::VideoBit, None);
         if meta.video_bit.is_none() {
             meta.video_bit = Some(bit);
         }
+        true
+    } else {
+        false
     }
 }
 
 /// 识别音频编码。
-fn init_audio_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_audio_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none()
         || (meta.year.is_none()
             && meta.resource_pix.is_none()
@@ -1435,16 +1485,15 @@ fn init_audio_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str)
             && meta.begin_season.is_none()
             && meta.begin_episode.is_none())
     {
-        return;
+        return false;
     }
     if let Some(cap) = AUDIO_ENCODE_PATTERN.captures(token) {
-        state.continue_flag = false;
-        state.stop_name_flag = true;
-        state.last_token_type = "audioencode".to_string();
-        state.last_token = cap
+        state.stop_name = true;
+        let last_token = cap
             .get(1)
             .map(|item| item.as_str().to_uppercase())
             .unwrap_or_default();
+        state.remember(VideoTokenKind::AudioEncode, Some(last_token));
         if meta.audio_encode.is_none() {
             meta.audio_encode = cap.get(1).map(|item| item.as_str().to_string());
         } else if meta.audio_encode.as_ref().map(|item| item.to_uppercase())
@@ -1462,7 +1511,9 @@ fn init_audio_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str)
                 cap.get(1).unwrap().as_str()
             ));
         }
-    } else if token.chars().all(|ch| ch.is_ascii_digit()) && state.last_token_type == "audioencode"
+        true
+    } else if token.chars().all(|ch| ch.is_ascii_digit())
+        && state.last_kind == Some(VideoTokenKind::AudioEncode)
     {
         if let Some(audio) = meta.audio_encode.clone() {
             meta.audio_encode = Some(if state.last_token.chars().all(|ch| ch.is_ascii_digit()) {
@@ -1480,11 +1531,15 @@ fn init_audio_encode(meta: &mut MetaResult, state: &mut VideoState, token: &str)
             });
         }
         state.last_token = token.to_string();
-    } else if token == "7³" && state.last_token_type == "audioencode" {
+        false
+    } else if token == "7³" && state.last_kind == Some(VideoTokenKind::AudioEncode) {
         if let Some(audio) = meta.audio_encode.clone() {
             meta.audio_encode = Some(format!("{audio} {token}"));
         }
         state.last_token = token.to_string();
+        false
+    } else {
+        false
     }
 }
 
@@ -1513,14 +1568,13 @@ fn tv_episode_range_hint(title: &str) -> Option<(i64, i64)> {
 }
 
 /// 识别帧率。
-fn init_fps(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
+fn init_fps(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
     if meta_name(meta).is_none() {
-        return;
+        return false;
     }
     if let Some(cap) = FPS_PATTERN.captures(token) {
-        state.continue_flag = false;
-        state.stop_name_flag = true;
-        state.last_token_type = "fps".to_string();
+        state.stop_name = true;
+        state.remember(VideoTokenKind::Fps, None);
         if let Some(value) = cap
             .get(1)
             .and_then(|item| item.as_str().parse::<i64>().ok())
@@ -1528,6 +1582,9 @@ fn init_fps(meta: &mut MetaResult, state: &mut VideoState, token: &str) {
             meta.fps = Some(value);
             state.last_token = format!("{value}FPS");
         }
+        true
+    } else {
+        false
     }
 }
 
@@ -2655,6 +2712,33 @@ mod tests {
         assert_eq!(parsed.year.as_deref(), Some("2026"));
         assert_eq!(parsed.resource_pix.as_deref(), Some("2160p"));
         assert_eq!(parsed.resource_effect.as_deref(), Some("HDRVivid"));
+    }
+
+    /// 拆分资源和编码词元应通过显式历史状态连续识别。
+    #[test]
+    fn preserves_cross_token_video_transitions() {
+        let options = ParseOptions::cached(
+            Vec::new(),
+            Vec::new(),
+            String::new(),
+            Vec::new(),
+            HashMap::from([("AMZN".to_string(), "Amazon".to_string())]),
+        );
+        let parsed = build_meta_info(
+            "Show S01E01 2026 1080p AMZN WEB DL H 265 10bit DDP 5 1 60FPS",
+            None,
+            &options,
+            true,
+        );
+
+        assert_eq!(parsed.begin_season, Some(1));
+        assert_eq!(parsed.begin_episode, Some(1));
+        assert_eq!(parsed.resource_type.as_deref(), Some("WEB-DL"));
+        assert_eq!(parsed.web_source.as_deref(), Some("Amazon"));
+        assert_eq!(parsed.video_encode.as_deref(), Some("H265 10bit"));
+        assert_eq!(parsed.video_bit.as_deref(), Some("10bit"));
+        assert_eq!(parsed.audio_encode.as_deref(), Some("DDP 5.1"));
+        assert_eq!(parsed.fps, Some(60));
     }
 
     /// 混合大小写片名 xXx 不能被干扰词规则清空。
