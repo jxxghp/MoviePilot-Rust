@@ -391,3 +391,6 @@ jobs:
           branch: chore/bump-moviepilot-rust-${{ needs.prepare.outputs.version }}
           base: v3
           delete-branch: true
+          add-paths: |
+            pyproject.toml
+            uv.lock
