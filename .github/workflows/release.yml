@@ -23,7 +23,7 @@ jobs:
       tag: ${{ steps.context.outputs.tag }}
       target_sha: ${{ steps.context.outputs.target_sha }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -77,10 +77,12 @@ jobs:
             fi
           fi
 
-          echo "should_publish=${should_publish}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
+          {
+            echo "should_publish=${should_publish}"
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "target_sha=${target_sha}"
+          } >> "$GITHUB_OUTPUT"
 
   auto-release:
     name: Create GitHub Release
@@ -167,10 +169,10 @@ jobs:
               manylinux: "",
             }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python.version }}
 
@@ -275,11 +277,11 @@ jobs:
               manylinux: "",
             }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         if: matrix.conf.manylinux == ''
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14t"
 
@@ -341,16 +343,14 @@ jobs:
       - prepare
       - publish
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: jxxghp/MoviePilot
           ref: v3
           token: ${{ secrets.MOVIEPILOT_REPO_TOKEN }}
           path: moviepilot
 
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: "0.12.5"
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Update moviepilot-rust pin
         id: bump
