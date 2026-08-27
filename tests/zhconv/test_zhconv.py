@@ -9,7 +9,7 @@ import moviepilot_rust
 
 pytestmark = pytest.mark.skipif(
     not hasattr(moviepilot_rust, "zhconv_fast"),
-    reason="中文转换入口仅由 free-threaded wheel 提供",
+    reason="中文转换入口仅由 Python 3.14 V3 wheel 提供",
 )
 
 
@@ -21,8 +21,14 @@ pytestmark = pytest.mark.skipif(
         ("臺灣電視劇", "zh-hk", "臺灣電視劇"),
     ],
 )
-def test_zhconv_fast_preserves_mediawiki_conversion(text, target, expected):
+def test_zhconv_fast_converts_plain_text(text, target, expected):
     assert moviepilot_rust.zhconv_fast(text, target) == expected
+
+
+def test_zhconv_fast_applies_mediawiki_conversion():
+    assert moviepilot_rust.zhconv_fast(
+        "-{zh-hans:后台;zh-hant:後台;}-", "zh-hans"
+    ) == "后台"
 
 
 def test_zhconv_fast_rejects_unknown_variant():

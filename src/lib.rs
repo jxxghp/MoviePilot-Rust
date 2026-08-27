@@ -8,15 +8,6 @@ mod support;
 
 use pyo3::prelude::*;
 
-#[cfg(all(feature = "abi3-py311", feature = "abi3-py314"))]
-compile_error!("abi3-py311 and abi3-py314 cannot be enabled together");
-
-#[cfg(all(
-    feature = "zhconv",
-    any(feature = "abi3-py311", feature = "abi3-py314")
-))]
-compile_error!("zhconv is only available in the free-threaded wheel");
-
 /// 返回扩展是否已成功加载，用于 Python 侧健康检查。
 #[pyfunction]
 fn is_available() -> bool {
