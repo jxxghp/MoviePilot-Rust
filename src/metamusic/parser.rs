@@ -74,6 +74,23 @@ pub(crate) fn parse_music_title(
     if let Some(parsed_artists) = parsed.artists {
         result.artists = parsed_artists;
     }
+    if !result.artists.is_empty() && context.artists.is_empty() {
+        // 客串署名补充艺术家列表，保留曲名中的原始版本说明和已有标签优先级。
+        let mut seen: HashSet<String> = result
+            .artists
+            .iter()
+            .map(|artist| compact_text(artist))
+            .collect();
+        for captures in MUSIC_FEATURED_ARTIST_RE.captures_iter(&context.text) {
+            if let Some(featured) = captures.name("artist") {
+                for artist in split_artists(featured.as_str()) {
+                    if seen.insert(compact_text(&artist)) {
+                        result.artists.push(artist);
+                    }
+                }
+            }
+        }
+    }
     result.album = parsed.album;
     if result.year.is_none() {
         result.year = parsed.year.or(context.year);
@@ -92,7 +109,7 @@ fn apply_audio_quality(value: &str, result: &mut MusicMetaResult) {
     result.bit_depth = linear_captures_group(&BIT_DEPTH_RE, value, "value")
         .and_then(|item| item.parse::<i64>().ok());
     result.sample_rate = linear_captures_group(&SAMPLE_RATE_RE, value, "value")
-        .and_then(|item| item.parse::<f64>().ok())
+        .and_then(|item| item.replace(' ', ".").parse::<f64>().ok())
         .map(|item| (item * 1000.0) as i64);
     result.bitrate = linear_captures_group(&BITRATE_RE, value, "value")
         .and_then(|item| item.parse::<i64>().ok())
@@ -255,6 +272,15 @@ fn parse_album_marker(context: &MusicNameContext) -> Option<MusicNameParseResult
     }
     let captures = MUSIC_ALBUM_MARKER_RE.captures(&context.text)?;
     let artist_prefix = captures.name("artist")?.as_str();
+    // 标准 artist - title 的作品名允许包含书名号，双语双分隔前缀保留原专辑语义。
+    if MUSIC_ARTIST_TITLE_RE.is_match(&context.text)
+        && MUSIC_ARTIST_TITLE_SEPARATOR_RE
+            .find_iter(artist_prefix)
+            .count()
+            == 1
+    {
+        return None;
+    }
     let album_raw = captures.name("album")?.as_str();
     let mut rest = captures
         .name("rest")
@@ -349,8 +375,7 @@ fn parse_alias_prefix(context: &MusicNameContext) -> Option<MusicNameParseResult
         return None;
     }
     let captures = MUSIC_ALIAS_PREFIX_RE.captures(&context.text)?;
-    let alias = captures.name("alias")?.as_str();
-    let artists = vec![canonical_artist(alias)];
+    let artists = vec!["Various Artists".to_string()];
     Some(build_name_result(
         context,
         &clean_tail(captures.name("title")?.as_str()),
@@ -532,7 +557,10 @@ fn strip_quality_tokens(value: &str) -> String {
     }
     text = linear_replace_owned(text, &MUSIC_TRAILING_CATALOG_RE, " ");
     text = linear_replace_owned(text, &MUSIC_EMPTY_BRACKET_RE, " ");
-    clean_text(text.trim_matches([' ', '-', '–', '—', '−', '－', '/', '+']))
+    text = clean_text(text.trim_matches([' ', '-', '–', '—', '−', '－', '/', '+']));
+    linear_replace_owned(text, &MUSIC_RELEASE_TYPE_RE, "${year}")
+        .trim()
+        .to_string()
 }
 
 /// 剔除广播日期前缀并提取年份区间的结束年。

@@ -20,6 +20,41 @@ CORE_FIELDS = {
 }
 
 
+@pytest.mark.parametrize("raw, expected", [
+    ("黄明志 - 一起飙高音 (feat. 李佳薇) (2018) - WEB-DL - 24bit ALAC-HHWEB",
+     {"artists": ["黄明志", "李佳薇"], "title": "一起飙高音 (feat. 李佳薇)", "year": 2018}),
+    ("李佳薇 - 追心者2.0 (feat.舒灏) (2023) - WEB-DL - 16bit ALAC-HHWEB",
+     {"artists": ["李佳薇", "舒灏"], "title": "追心者2.0 (feat.舒灏)", "year": 2023}),
+    ("群星 - 电视剧《如果奔跑是我的人生》原声带 (2024) - WEB-DL - 24bit ALAC-HHWEB",
+     {"artists": ["群星"], "title": "电视剧《如果奔跑是我的人生》原声带", "album": None, "year": 2024}),
+    ("群星 - 《破事精英2》影视剧原声带 (2023) - WEB-DL - 24bit ALAC-HHWEB",
+     {"artists": ["群星"], "title": "《破事精英2》影视剧原声带", "album": None, "year": 2023}),
+    ("李佳薇 - 大火 (Reborn) - Single(2024) - ALAC [16B-44.1kHz]",
+     {"artists": ["李佳薇"], "title": "大火 (Reborn)", "year": 2024, "bit_depth": 16, "sample_rate": 44100}),
+    ("[Album] Aoi Teshima - Tokyo [2017.11.22]",
+     {"artists": ["Aoi Teshima"], "title": "Tokyo", "year": 2017}),
+    ("[2021 10 20]手嶌葵(Aoi Teshima) - Highlights from Simple is best Vol  2 [24bit／96kHz] (Flac)",
+     {"artists": ["手嶌葵(Aoi Teshima)"], "title": "Highlights from Simple is best Vol 2", "year": 2021}),
+    ("VariousArtists-Top.100.Classical.Music.1994.Flac.16bit.44.1khz",
+     {"artists": ["Various Artists"], "title": "Top 100 Classical Music", "year": 1994}),
+    ("Various.Artists-Sci-Trance.2014-Redacted", {"artists": ["Various Artists"]}),
+    ("Sophie Zelmani-Sophie Zelmani 1995 Album",
+     {"artists": ["Sophie Zelmani"], "title": "Sophie Zelmani", "year": 1995}),
+    ("Gene Clark-White Light 1971 - FLAC 16bit 44 1khz",
+     {"artists": ["Gene Clark"], "title": "White Light", "year": 1971, "sample_rate": 44100}),
+    ("Aimer - A World Where the Sun Never Rises 2025-FLAC 16bit 44 1khz-Mmx",
+     {"artists": ["Aimer"], "title": "A World Where the Sun Never Rises", "year": 2025, "sample_rate": 44100}),
+    ("VA - Bar Groove Analog 17 2026 FLAC",
+     {"artists": ["Various Artists"], "title": "Bar Groove Analog 17", "year": 2026}),
+])
+def test_parse_metamusic_real_listing_samples(raw, expected):
+    """2026-09-06 真实站点名称中的日期、署名和音质应由 Rust 本体正确提取。"""
+    parsed = moviepilot_rust.parse_metamusic_fast(raw)
+
+    for field, value in expected.items():
+        assert parsed[field] == value, field
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

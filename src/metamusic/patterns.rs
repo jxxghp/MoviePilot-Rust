@@ -22,11 +22,11 @@ pub(super) static AUDIO_FORMAT_RE: Lazy<LinearRegex> = Lazy::new(|| {
     )
 });
 pub(super) static BIT_DEPTH_RE: Lazy<LinearRegex> = Lazy::new(|| {
-    compile_linear(r"(?i)(?:^|[^\d])(?P<value>16|20|24|32)\s*(?:-?bit|bits?|位)(?:$|[^\w])")
+    compile_linear(r"(?i)(?:^|[^\d])(?P<value>16|20|24|32)\s*(?:-?bit|bits?|位|B)(?:$|[^\w])")
 });
 pub(super) static SAMPLE_RATE_RE: Lazy<LinearRegex> = Lazy::new(|| {
     compile_linear(
-        r"(?i)(?:^|[^\d])(?P<value>44(?:\.1)?|48|88(?:\.2)?|96|176(?:\.4)?|192|352(?:\.8)?|384|705(?:\.6)?|768)\s*k(?:hz)?(?:$|[^\w])",
+        r"(?i)(?:^|[^\d])(?P<value>44(?:[. ]1)?|48|88(?:[. ]2)?|96|176(?:[. ]4)?|192|352(?:[. ]8)?|384|705(?:[. ]6)?|768)\s*k(?:hz)?(?:$|[^\w])",
     )
 });
 pub(super) static BITRATE_RE: Lazy<LinearRegex> = Lazy::new(|| {
@@ -90,10 +90,19 @@ pub(super) static MUSIC_EMPTY_BRACKET_RE: Lazy<LinearRegex> =
     Lazy::new(|| compile_linear(r"[\(（\[]\s*(?:[/+,\-]\s*)*[\)）\]]"));
 pub(super) static MUSIC_TRAILING_CATALOG_RE: Lazy<LinearRegex> =
     Lazy::new(|| compile_linear(r"\s*\{[A-Za-z0-9][^{}]{0,40}\}\s*$"));
-pub(super) static MUSIC_YEAR_RE: Lazy<LinearRegex> =
-    Lazy::new(|| compile_linear(r"[\(\[（【]((?:19|20)\d{2})[\)\]）】]"));
+pub(super) static MUSIC_YEAR_RE: Lazy<LinearRegex> = Lazy::new(|| {
+    compile_linear(
+        r"[\(\[（【]((?:19|20)\d{2})(?:[. /-](?:0?[1-9]|1[0-2])[. /-](?:0?[1-9]|[12]\d|3[01]))?[\)\]）】]",
+    )
+});
 pub(super) static MUSIC_TRAILING_YEAR_RE: Lazy<Regex> =
-    Lazy::new(|| compile(r"(?<!\d)[\s\-–—]+((?:19|20)\d{2})\s*$"));
+    Lazy::new(|| compile(r"[\s\-–—]+((?:19|20)\d{2})\s*$"));
+// 发行类型只清理独立尾段或年份之后的标签，不删除 Best Album 等自然标题。
+pub(super) static MUSIC_RELEASE_TYPE_RE: Lazy<LinearRegex> = Lazy::new(|| {
+    compile_linear(
+        r"(?i)(?:\s+[-–—−－]+\s*(?:single|ep|album)|(?P<year>(?:19|20)\d{2})\s+(?:single|ep|album))\s*$",
+    )
+});
 pub(super) static MUSIC_YEAR_RANGE_STRIP_RE: Lazy<Regex> = Lazy::new(|| {
     compile(r"(?<!\d)(?:19|20)\d{2}\s*[-–—~～]\s*(?:(?:19|20)(\d{2})|(\d{2}))(?=\s|[\(（]|$)")
 });
@@ -111,6 +120,11 @@ pub(super) static MUSIC_ALIAS_PREFIX_RE: Lazy<LinearRegex> = Lazy::new(|| {
 });
 pub(super) static MUSIC_ARTIST_TITLE_RE: Lazy<LinearRegex> =
     Lazy::new(|| compile_linear(r"^\s*(?P<artist>.+?)\s+[-–—−－]+\s+(?P<title>.+?)\s*$"));
+pub(super) static MUSIC_ARTIST_TITLE_SEPARATOR_RE: Lazy<LinearRegex> =
+    Lazy::new(|| compile_linear(r"\s+[-–—−－]+(?:\s+|$)"));
+pub(super) static MUSIC_FEATURED_ARTIST_RE: Lazy<LinearRegex> = Lazy::new(|| {
+    compile_linear(r"(?i)\((?:featuring\s+|(?:feat|ft)(?:\.\s*|\s+))(?P<artist>[^()]+)\)")
+});
 pub(super) static MUSIC_TITLE_COMMENT_RE: Lazy<LinearRegex> =
     Lazy::new(|| compile_linear(r"\s*[\(（](?P<comment>[^)）]*[《》][^)）]*)[\)）]\s*$"));
 pub(super) static MUSIC_ALBUM_MARKER_RE: Lazy<LinearRegex> = Lazy::new(|| {
