@@ -55,6 +55,8 @@ pub(super) static EMBY_TMDB_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"\[tmdb[=\-]\s*(\d*)\s*\]").unwrap(),
         Regex::new(r"\{tmdbid[=\-]\s*(\d*)\s*\}").unwrap(),
         Regex::new(r"\{tmdb[=\-]\s*(\d*)\s*\}").unwrap(),
+        Regex::new(r"(?i)\(tmdbid[=\-]\s*(\d+)\s*\)").unwrap(),
+        Regex::new(r"(?i)\(tmdb[=\-]\s*(\d+)\s*\)").unwrap(),
     ]
 });
 pub(super) static BANGUMI_ID_RE_LIST: Lazy<Vec<Regex>> = Lazy::new(|| {

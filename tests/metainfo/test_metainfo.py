@@ -124,11 +124,20 @@ class MetaInfoPublicEntryTest(TestCase):
                 1399,
             ),
             ("/movies/Avatar (2009) {tmdb-19995}/Avatar.2009.1080p.mkv", 19995),
+            ("/movies/狩猎 (2022) (tmdb-727340)/狩猎.mkv", 727340),
         ]
         for path, expected_tmdbid in test_paths:
             with self.subTest(path=path):
                 parsed = moviepilot_rust.parse_metainfo_path_fast(path, build_options())
                 self.assertEqual(parsed["tmdbid"], expected_tmdbid)
+
+    def test_parenthesized_tmdb_id_is_extracted_from_title(self):
+        """圆括号 TMDB 标签应从手动识别标题中提取并移除。"""
+        parsed = moviepilot_rust.find_metainfo_fast("狩猎 (2022) (tmdb-727340)")
+
+        self.assertEqual(parsed["metainfo"]["media_source"], "themoviedb")
+        self.assertEqual(parsed["metainfo"]["media_id"], "727340")
+        self.assertEqual(parsed["title"].strip(), "狩猎 (2022)")
 
     def test_metainfopath_with_custom_words(self):
         """同步后端 MetaInfoPath 自定义识别词用例。"""
