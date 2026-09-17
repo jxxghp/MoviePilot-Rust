@@ -256,6 +256,22 @@ class MetaInfoPublicEntryTest(TestCase):
         self.assertEqual(_format_episode(parsed), "E04")
         self.assertEqual(parsed["apply_words"], custom_words)
 
+    def test_custom_words_episode_offset_applies_to_subtitle(self):
+        """标题无集数时，自定义偏移应只修改副标题中的集数而保留季数。"""
+        custom_words = [
+            "BLEACH Thousand-Year Blood War S04 => BLEACH 2004 S02 && S02 <> 1080p >> EP+40"
+        ]
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "BLEACH Thousand-Year Blood War S04 1080p Disney+ WEB-DL AAC 2.0 H.264-CHDWEB",
+            "死神 千年血战篇 -祸进谭- 第四季 第8集 ...",
+            build_options(custom_words=custom_words),
+        )
+
+        self.assertEqual(parsed["begin_season"], 2)
+        self.assertEqual(parsed["begin_episode"], 48)
+        self.assertEqual(parsed["subtitle"], "死神 千年血战篇 -祸进谭- 第四季 第48集 ...")
+        self.assertEqual(parsed["apply_words"], custom_words)
+
     def test_custom_words_episode_offset_supports_multiplication_expression(self):
         """集数偏移表达式应支持乘法和连续运算。"""
         custom_words = [

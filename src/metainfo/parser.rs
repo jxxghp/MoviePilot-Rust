@@ -23,7 +23,8 @@ pub(crate) fn build_meta_info(
     with_original_name: bool,
 ) -> MetaResult {
     let org_title = title.to_string();
-    let (prepared_title, apply_words) = prepare_words(title, &options.custom_words);
+    let (prepared_title, prepared_subtitle, apply_words) =
+        prepare_words(title, subtitle, &options.custom_words);
     let explicit = find_explicit_metainfo(&prepared_title);
     let mut parsed_title = explicit.title.clone();
     let mut isfile = false;
@@ -35,9 +36,9 @@ pub(crate) fn build_meta_info(
     }
 
     let mut meta = if is_anime(&parsed_title) {
-        parse_anime(&parsed_title, subtitle, isfile, options)
+        parse_anime(&parsed_title, prepared_subtitle.as_deref(), isfile, options)
     } else {
-        parse_video(&parsed_title, subtitle, isfile, options)
+        parse_video(&parsed_title, prepared_subtitle.as_deref(), isfile, options)
     };
 
     meta.title = org_title.clone();

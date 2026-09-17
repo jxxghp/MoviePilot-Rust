@@ -8,10 +8,28 @@ use std::sync::Mutex;
 
 static CUSTOM_WORD_RE_CACHE: Lazy<Mutex<BoundedCache<String, Regex>>> =
     Lazy::new(|| Mutex::new(BoundedCache::new(256)));
+static SUBTITLE_EPISODE_RANGE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?<!\d)\[?\s*(\d{1,4})\s*-\s*(\d{1,4})\s*(?:(?:Fin|End)(?![a-z0-9])|完结(?![\u4e00-\u9fff]))(?:\s*\](?!\d)|(?!\s*(?:\]\d|\d))\s*)",
+    )
+    .unwrap()
+});
+static SUBTITLE_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?<![全共])([0-9一二三四五六七八九十百零]+)\s*[集话話期幕](?!\s*[全共])").unwrap()
+});
+static SUBTITLE_EPISODE_TITLE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<![A-Za-z0-9_])Episode\s+(\d{1,4})(?![A-Za-z0-9_])").unwrap());
+static SUBTITLE_EPISODE_TOKEN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?<![A-Za-z0-9_])(?:EP|E)(\d{1,4})(?![A-Za-z0-9_])").unwrap());
 
 /// 应用自定义识别词，覆盖替换、屏蔽和集数偏移三类规则。
-pub(super) fn prepare_words(title: &str, words: &[String]) -> (String, Vec<String>) {
+pub(super) fn prepare_words(
+    title: &str,
+    subtitle: Option<&str>,
+    words: &[String],
+) -> (String, Option<String>, Vec<String>) {
     let mut title = title.to_string();
+    let mut subtitle = subtitle.map(str::to_string);
     let mut applied = Vec::new();
     for word in words {
         if word.is_empty() || word.starts_with('#') {
@@ -26,9 +44,15 @@ pub(super) fn prepare_words(title: &str, words: &[String]) -> (String, Vec<Strin
                 let (new_title, replace_state) = replace_regex(&title, &params[0], &params[1]);
                 title = new_title;
                 if replace_state {
-                    let (new_title, offset_state) =
-                        episode_offset(&title, &params[2], &params[3], &params[4]);
+                    let (new_title, new_subtitle, offset_state) = episode_offset_with_subtitle(
+                        &title,
+                        subtitle.as_deref(),
+                        &params[2],
+                        &params[3],
+                        &params[4],
+                    );
                     title = new_title;
+                    subtitle = new_subtitle;
                     state = offset_state;
                 }
             }
@@ -38,9 +62,15 @@ pub(super) fn prepare_words(title: &str, words: &[String]) -> (String, Vec<Strin
                 state = replace_state;
             }
             "offset" => {
-                let (new_title, offset_state) =
-                    episode_offset(&title, &params[0], &params[1], &params[2]);
+                let (new_title, new_subtitle, offset_state) = episode_offset_with_subtitle(
+                    &title,
+                    subtitle.as_deref(),
+                    &params[0],
+                    &params[1],
+                    &params[2],
+                );
                 title = new_title;
+                subtitle = new_subtitle;
                 state = offset_state;
             }
             _ => {
@@ -53,7 +83,7 @@ pub(super) fn prepare_words(title: &str, words: &[String]) -> (String, Vec<Strin
             applied.push(word.clone());
         }
     }
-    (title, applied)
+    (title, subtitle, applied)
 }
 
 /// 解析自定义识别词格式。
@@ -159,6 +189,108 @@ fn episode_offset(title: &str, front: &str, back: &str, offset: &str) -> (String
     } else {
         (title.to_string(), false)
     }
+}
+
+/// 在标题和副标题中按现有规则尝试集数偏移，并保留两个字段的边界。
+fn episode_offset_with_subtitle(
+    title: &str,
+    subtitle: Option<&str>,
+    front: &str,
+    back: &str,
+    offset: &str,
+) -> (String, Option<String>, bool) {
+    let (new_title, title_state) = episode_offset(title, front, back, offset);
+    if title_state {
+        return (new_title, subtitle.map(str::to_string), true);
+    }
+    let Some(subtitle) = subtitle else {
+        return (title.to_string(), None, false);
+    };
+    let (new_subtitle, subtitle_state) = episode_offset(subtitle, front, back, offset);
+    if subtitle_state {
+        return (title.to_string(), Some(new_subtitle), true);
+    }
+    let context = format!("{title} {subtitle}");
+    if !locators_match(&context, front, back) {
+        return (title.to_string(), Some(subtitle.to_string()), false);
+    }
+    let (new_subtitle, subtitle_state) = episode_offset_subtitle(subtitle, offset);
+    if subtitle_state {
+        return (title.to_string(), Some(new_subtitle), true);
+    }
+    (title.to_string(), Some(subtitle.to_string()), false)
+}
+
+/// 判断定位词是否在标题和副标题组成的上下文中同时出现。
+fn locators_match(text: &str, front: &str, back: &str) -> bool {
+    for locator in [front, back] {
+        if !locator.is_empty()
+            && !cached_fancy_regex(locator)
+                .map(|regex| regex.is_match(text))
+                .unwrap_or(false)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// 收集副标题中会被 MetaInfo 识别为集数的数字范围。
+fn subtitle_episode_spans(subtitle: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    for captures in SUBTITLE_EPISODE_RANGE_RE.captures_iter(subtitle) {
+        push_capture_span(&mut spans, &captures, 1);
+        push_capture_span(&mut spans, &captures, 2);
+    }
+    for captures in SUBTITLE_EPISODE_RE.captures_iter(subtitle) {
+        push_capture_span(&mut spans, &captures, 1);
+    }
+    for captures in SUBTITLE_EPISODE_TITLE_RE.captures_iter(subtitle) {
+        push_capture_span(&mut spans, &captures, 1);
+    }
+    for captures in SUBTITLE_EPISODE_TOKEN_RE.captures_iter(subtitle) {
+        push_capture_span(&mut spans, &captures, 1);
+    }
+    spans.sort_unstable_by_key(|(start, _)| *start);
+    spans
+}
+
+/// 添加不与已有范围重叠的正则捕获范围。
+fn push_capture_span(spans: &mut Vec<(usize, usize)>, captures: &Captures<'_>, index: usize) {
+    let Some(value) = captures.get(index) else {
+        return;
+    };
+    let span = (value.start(), value.end());
+    if !spans
+        .iter()
+        .any(|(start, end)| span.0 < *end && span.1 > *start)
+    {
+        spans.push(span);
+    }
+}
+
+/// 只偏移副标题中的集数表达式，避免修改副标题里的季数或年份。
+fn episode_offset_subtitle(subtitle: &str, offset: &str) -> (String, bool) {
+    let spans = subtitle_episode_spans(subtitle);
+    if spans.is_empty() {
+        return (subtitle.to_string(), false);
+    }
+    let mut replacements = Vec::with_capacity(spans.len());
+    for (start, end) in &spans {
+        let value = &subtitle[*start..*end];
+        let Some(number) = cn_number_to_i64(value) else {
+            return (subtitle.to_string(), false);
+        };
+        let Some(offset_value) = eval_episode_offset(offset, number) else {
+            return (subtitle.to_string(), false);
+        };
+        replacements.push((*start, *end, format_episode_offset(value, offset_value)));
+    }
+    let mut result = subtitle.to_string();
+    for (start, end, replacement) in replacements.into_iter().rev() {
+        result.replace_range(start..end, &replacement);
+    }
+    (result, true)
 }
 
 /// 缓存自定义识别词正则，支持用户规则里的 look-around 与反向引用语法。
