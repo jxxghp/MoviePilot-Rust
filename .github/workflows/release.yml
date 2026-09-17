@@ -321,6 +321,10 @@ jobs:
     needs:
       - build
       - build-free-threaded
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.build-free-threaded.result == 'success'
     environment: pypi
     permissions:
       id-token: write
