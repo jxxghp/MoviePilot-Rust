@@ -2894,6 +2894,42 @@ mod tests {
         }
     }
 
+    /// 副标题中被“不包含/不含/不包括”否定的季集号不得作为资源季集号。
+    #[test]
+    fn ignores_negated_season_and_episode_in_subtitle() {
+        let options = ParseOptions::empty();
+        for subtitle in [
+            "【赛博朋克：边缘行者】 转载 不包含 第二季",
+            "赛博朋克：边缘行者 不含第2季",
+            "赛博朋克：边缘行者 不包括 第二季",
+        ] {
+            let parsed = build_meta_info(
+                "[Nekomoe kissaten&VCB-Studio] Cyberpunk Edgerunners [Ma10p_1080p]",
+                Some(subtitle),
+                &options,
+                false,
+            );
+
+            assert_eq!(parsed.begin_season, None);
+        }
+
+        let affirmed = build_meta_info(
+            "Cyberpunk Edgerunners 2022 1080p NF WEB-DL x264 DDP5.1-GRP",
+            Some("赛博朋克：边缘行者 第一季 不包含第二季"),
+            &options,
+            false,
+        );
+        assert_eq!(affirmed.begin_season, Some(1));
+
+        let episode = build_meta_info(
+            "Some Show S01 2022 1080p WEB-DL H264-GRP",
+            Some("某剧 不含第13集"),
+            &options,
+            false,
+        );
+        assert_eq!(episode.begin_episode, None);
+    }
+
     /// 数字后缀、年份范围和不完整中文标记不得被截断识别为集数。
     #[test]
     fn rejects_invalid_finished_episode_ranges() {

@@ -236,7 +236,7 @@ pub(super) static SUBTITLE_HAS_SEASON_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 pub(super) static SUBTITLE_SEASON_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十S\-]+)\s*季(?!\s*[全共])")
+    RegexBuilder::new(r"(?<!(?:不包含|不包括|不含)\s*)(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十S\-]+)\s*季(?!\s*[全共])")
         .case_insensitive(true)
         .build()
         .unwrap()
@@ -249,7 +249,7 @@ pub(super) static SUBTITLE_SEASON_ALL_RE: Lazy<Regex> = Lazy::new(|| {
 });
 pub(super) static SUBTITLE_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(
-        r"(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕](?!\s*[全共])",
+        r"(?<!(?:不包含|不包括|不含)\s*)(?<![全共]\s*)[第\s]+([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕](?!\s*[全共])",
     )
     .case_insensitive(true)
     .build()
