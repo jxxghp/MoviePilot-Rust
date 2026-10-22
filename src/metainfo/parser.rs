@@ -1749,7 +1749,7 @@ fn init_episode_range_fin(meta: &mut MetaResult, title_text: &str) {
     if meta.begin_episode.is_none() {
         meta.begin_episode = Some(begin);
         meta.end_episode = Some(end);
-        meta.total_episode = end;
+        meta.total_episode = end - begin + 1;
         meta.media_type = MEDIA_TYPE_TV.to_string();
         meta.subtitle_flag = true;
     }
@@ -2875,10 +2875,10 @@ mod tests {
     #[test]
     fn parses_finished_episode_range_from_subtitle() {
         let options = ParseOptions::empty();
-        for (subtitle, begin, end) in [
-            ("Some Show [01-01Fin]", 1, 1),
-            ("Some Show 13-24 END", 13, 24),
-            ("某剧 01-12完结", 1, 12),
+        for (subtitle, begin, end, count) in [
+            ("Some Show [01-01Fin]", 1, 1, 1),
+            ("Some Show 13-24 END", 13, 24, 12),
+            ("某剧 01-12完结", 1, 12, 12),
         ] {
             let parsed = build_meta_info(
                 "Some Show S01 2022 1080p WEB-DL H264-GRP",
@@ -2889,7 +2889,7 @@ mod tests {
 
             assert_eq!(parsed.begin_episode, Some(begin));
             assert_eq!(parsed.end_episode, Some(end));
-            assert_eq!(parsed.total_episode, end);
+            assert_eq!(parsed.total_episode, count);
             assert_eq!(parsed.media_type, "电视剧");
         }
     }
@@ -2951,5 +2951,19 @@ mod tests {
             assert_eq!(parsed.begin_episode, None, "subtitle: {subtitle}");
             assert_eq!(parsed.total_episode, 0, "subtitle: {subtitle}");
         }
+    }
+
+    /// 非首集开始的完结合集，集数是闭区间长度而非末集编号。
+    #[test]
+    fn finished_episode_range_counts_only_included_episodes() {
+        let parsed = build_meta_info(
+            "Review Show S01 2024 1080p WEB-DL",
+            Some("[11-26Fin]"),
+            &ParseOptions::empty(),
+            true,
+        );
+        assert_eq!(parsed.begin_episode, Some(11));
+        assert_eq!(parsed.end_episode, Some(26));
+        assert_eq!(parsed.total_episode, 16);
     }
 }
