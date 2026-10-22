@@ -116,6 +116,9 @@ fn handle_start_field(
 
     if local.eq_ignore_ascii_case(b"link") {
         fill_link_from_href(event, item)?;
+        if attr_value(event, b"href")?.is_some() {
+            return Ok(());
+        }
     }
 
     if current_field.is_none() {
@@ -210,12 +213,22 @@ fn fill_enclosure(event: &BytesStart<'_>, item: &mut RssItem) -> Result<(), RssE
     Ok(())
 }
 
-/// 从 Atom link 的 href 属性读取页面地址。
+/// 按Atom link的rel区分下载内容与详情地址，不让标签顺序改变下载目标。
 fn fill_link_from_href(event: &BytesStart<'_>, item: &mut RssItem) -> Result<(), RssError> {
-    if !item.link.is_empty() {
+    let Some(href) = attr_value(event, b"href")? else {
         return Ok(());
-    }
-    if let Some(href) = attr_value(event, b"href")? {
+    };
+    let relation = attr_value(event, b"rel")?.unwrap_or_default();
+    if relation.eq_ignore_ascii_case("enclosure") {
+        if item.enclosure.is_empty() {
+            item.enclosure = href;
+            if let Some(length) = attr_value(event, b"length")? {
+                item.size = length.trim().parse::<i64>().unwrap_or(0);
+            }
+        }
+    } else if item.link.is_empty()
+        && (relation.is_empty() || relation.eq_ignore_ascii_case("alternate"))
+    {
         item.link = href;
     }
     Ok(())
@@ -358,5 +371,23 @@ mod tests {
         let items = parse_rss_items(xml, 10).expect("valid rss");
 
         assert!(items.is_empty());
+    }
+
+    /// Atom下载链接与详情链接独立，顺序不能改变enclosure和length语义。
+    #[test]
+    fn atom_enclosure_is_independent_of_alternate_order() {
+        let alternate = r#"<link rel="alternate" href="https://example.com/details/1"/>"#;
+        let enclosure = r#"<link rel="enclosure" href="https://example.com/download/1.torrent" length="1234"/>"#;
+        for links in [
+            format!("{alternate}{enclosure}"),
+            format!("{enclosure}{alternate}"),
+        ] {
+            let xml = format!("<feed><entry><title>Review</title>{links}</entry></feed>");
+            let items = parse_rss_items(&xml, 10).expect("valid atom");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].link, "https://example.com/details/1");
+            assert_eq!(items[0].enclosure, "https://example.com/download/1.torrent");
+            assert_eq!(items[0].size, 1234);
+        }
     }
 }

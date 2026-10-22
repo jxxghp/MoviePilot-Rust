@@ -22,7 +22,9 @@ pub(crate) fn parse_indexer_torrents_fast(
     let Some(list_selector) = get_selector_text(list_config)? else {
         return Ok(None);
     };
-    let fields = parse_field_specs(fields)?;
+    let Some(fields) = parse_field_specs(fields)? else {
+        return Ok(None);
+    };
     let category = parse_category_map(category)?;
     let rows = py
         .detach(|| {
@@ -53,15 +55,17 @@ pub(crate) fn parse_indexer_subtitles_fast(
     let Some(list_selector) = get_selector_text(list_config)? else {
         return Ok(None);
     };
-    let fields = parse_field_specs(fields)?;
+    let Some(fields) = parse_field_specs(fields)? else {
+        return Ok(None);
+    };
     let rows = py
         .detach(|| parse_indexer_subtitles(html_text, domain, &list_selector, &fields, result_num))
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     rows.map(|rows| rows_to_py(py, rows)).transpose()
 }
 
-/// 将 Python 字段配置一次性编译为纯 Rust 配置。
-fn parse_field_specs(fields: &Bound<'_, PyDict>) -> PyResult<Vec<FieldSpec>> {
+/// 将Python字段配置整批编译，不支持的查询返回None以启用完整Python兜底。
+fn parse_field_specs(fields: &Bound<'_, PyDict>) -> PyResult<Option<Vec<FieldSpec>>> {
     let mut specs = Vec::new();
     for (key, value) in fields.iter() {
         if value.is_none() {
@@ -70,16 +74,24 @@ fn parse_field_specs(fields: &Bound<'_, PyDict>) -> PyResult<Vec<FieldSpec>> {
         let Ok(config) = value.cast_into::<PyDict>() else {
             continue;
         };
+        let query = parse_query_spec(&config)?;
+        // 没有selector的静态字段合法；声明了但无法编译的selector必须整批回退。
+        if query.is_none() && get_selector_text(&config)?.is_some() {
+            return Ok(None);
+        }
+        let Some(case_selectors) = parse_case_selectors(&config)? else {
+            return Ok(None);
+        };
         specs.push(FieldSpec::new(
             key.extract::<String>()?,
             get_optional_string(&config, "text")?,
             get_optional_string(&config, "default_value")?,
             parse_text_filters(config.get_item("filters")?)?,
-            parse_query_spec(&config)?,
-            parse_case_selectors(&config)?,
+            query,
+            case_selectors,
         ));
     }
-    Ok(specs)
+    Ok(Some(specs))
 }
 
 /// 将 selector 配置编译为查询计划。
@@ -107,20 +119,21 @@ fn parse_query_spec(config: &Bound<'_, PyDict>) -> PyResult<Option<QuerySpec>> {
 }
 
 /// 编译优惠倍率字段的 case selector。
-fn parse_case_selectors(config: &Bound<'_, PyDict>) -> PyResult<Vec<(SelectorPlan, f64)>> {
+fn parse_case_selectors(config: &Bound<'_, PyDict>) -> PyResult<Option<Vec<(SelectorPlan, f64)>>> {
     let Some(case_obj) = config.get_item("case")? else {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     };
     let Ok(case_dict) = case_obj.cast::<PyDict>() else {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     };
     let mut selectors = Vec::new();
     for (selector, value) in case_dict.iter() {
-        if let Some(selector) = SelectorPlan::compile(&selector.extract::<String>()?) {
-            selectors.push((selector, value.extract::<f64>().unwrap_or(1.0)));
-        }
+        let Some(selector) = SelectorPlan::compile(&selector.extract::<String>()?) else {
+            return Ok(None);
+        };
+        selectors.push((selector, value.extract::<f64>().unwrap_or(1.0)));
     }
-    Ok(selectors)
+    Ok(Some(selectors))
 }
 
 /// 将 Python filters 数组转换为类型化文本过滤器。

@@ -613,3 +613,42 @@ fn parse_f64(value: &str, context: &str) -> FilterResult<f64> {
         .parse::<f64>()
         .map_err(|error| FilterError::new(format!("{context}解析失败: {error}")))
 }
+
+#[cfg(test)]
+mod review_regression_tests {
+    use super::*;
+
+    /// 真实过滤入口对分段完结合集按16集而不是末集编号26折算每集大小。
+    #[test]
+    fn filters_finished_subrange_by_actual_episode_count() {
+        let groups = vec![FilterGroup::new("review".into(), "SIZE".into()).expect("valid group")];
+        let rules = HashMap::from([(
+            "SIZE".into(),
+            RuleSpec {
+                size_range: Some(">800".into()),
+                ..RuleSpec::default()
+            },
+        )]);
+        let torrent = TorrentSnapshot::new(
+            "Review".into(),
+            "Review Show S01 2024 1080p WEB-DL".into(),
+            "[11-26Fin]".into(),
+            Vec::new(),
+            HashMap::new(),
+            (16_u64 * 1024 * 1024 * 1024) as f64,
+            1,
+            None,
+            0.0,
+        );
+        let output = filter_torrents(
+            &groups,
+            &[torrent],
+            &RuleMatcher::new(rules),
+            &MediaSnapshot::new(false, HashMap::new()),
+            &ParseOptions::empty(),
+            false,
+        )
+        .expect("valid filter");
+        assert_eq!(output.0, vec![(0, 100)]);
+    }
+}

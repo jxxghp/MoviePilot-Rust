@@ -40,8 +40,7 @@ impl QuerySpec {
         let remove_selectors = remove_selector_texts
             .iter()
             .map(|selector| parse_css_selector(selector))
-            .collect::<Option<Vec<_>>>()
-            .unwrap_or_default();
+            .collect::<Option<Vec<_>>>()?;
         Some(Self {
             selector_text,
             selector,
@@ -265,4 +264,17 @@ pub(super) fn selector_exists_with_plan(row: ElementRef<'_>, selector: &Selector
         .into_iter()
         .next()
         .is_some()
+}
+
+#[cfg(test)]
+mod review_regression_tests {
+    use super::QuerySpec;
+
+    /// remove中不支持的PyQuery选择器必须使查询计划失效，不能静默保留被移除内容。
+    #[test]
+    fn unsupported_remove_selector_invalidates_query_plan() {
+        assert!(
+            QuerySpec::compile("a".into(), None, vec!["span:eq(0)".into()], None, None).is_none()
+        );
+    }
 }
