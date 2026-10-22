@@ -30,4 +30,4 @@ quick-xml = "0.42"
 regex = "1.11"
 scraper = "0.24"
 url = "2.5"
-zhconv = { version = "0.4.1", optional = true }
+zhconv = { version = "0.4.1", optional = true, default-features = false, features = ["mediawiki"] }
