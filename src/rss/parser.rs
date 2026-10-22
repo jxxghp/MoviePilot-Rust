@@ -1,7 +1,7 @@
 use super::model::{RssError, RssItem};
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use quick_xml::events::{BytesRef, BytesStart, Event};
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 
 #[derive(Clone, Copy)]
 enum TextField {
@@ -25,7 +25,7 @@ pub(crate) fn parse_rss_items(xml_text: &str, max_items: usize) -> Result<Vec<Rs
         match reader.read_event() {
             Ok(Event::Start(event)) => {
                 let name = event.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
                 if current_item.is_none() && is_item_node(local) {
                     current_item = Some(RssItem::default());
                     item_depth = 1;
@@ -40,21 +40,21 @@ pub(crate) fn parse_rss_items(xml_text: &str, max_items: usize) -> Result<Vec<Rs
             }
             Ok(Event::Empty(event)) => {
                 let name = event.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
                 if let Some(item) = current_item.as_mut() {
                     handle_empty_field(&event, local, item)?;
                 }
             }
             Ok(Event::Text(event)) => {
                 if let (Some(item), Some((field, _))) = (current_item.as_mut(), current_field) {
-                    let text = event.decode().map_err(RssError::from_display)?;
-                    append_text_field(item, field, text.as_ref());
+                    // 输入按 UTF-8 字符串读取，事件内容即原文；实体引用以 GeneralRef 事件单独到达
+                    append_text_field(item, field, event.as_ref());
                 }
             }
             Ok(Event::CData(event)) => {
                 if let (Some(item), Some((field, _))) = (current_item.as_mut(), current_field) {
-                    let text = event.decode().map_err(RssError::from_display)?;
-                    append_text_field(item, field, text.as_ref());
+                    // 输入按 UTF-8 字符串读取，事件内容即原文；实体引用以 GeneralRef 事件单独到达
+                    append_text_field(item, field, event.as_ref());
                 }
             }
             Ok(Event::GeneralRef(event)) => {
@@ -65,7 +65,7 @@ pub(crate) fn parse_rss_items(xml_text: &str, max_items: usize) -> Result<Vec<Rs
             }
             Ok(Event::End(event)) => {
                 let name = event.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
                 if current_item.is_some() && item_depth == 1 && is_item_node(local) {
                     if let Some(item) = current_item.take() {
                         if let Some(item) = finalize_item(item) {
@@ -185,8 +185,7 @@ fn resolve_general_ref(event: &BytesRef<'_>) -> Result<String, RssError> {
     if let Some(value) = event.resolve_char_ref().map_err(RssError::from_display)? {
         return Ok(value.to_string());
     }
-    let name = event.decode().map_err(RssError::from_display)?;
-    let resolved = match name.as_ref() {
+    let resolved = match event.as_ref() {
         "amp" => "&".to_string(),
         "lt" => "<".to_string(),
         "gt" => ">".to_string(),
@@ -226,9 +225,9 @@ fn fill_link_from_href(event: &BytesStart<'_>, item: &mut RssItem) -> Result<(),
 fn attr_value(event: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>, RssError> {
     for attr in event.attributes().with_checks(false) {
         let attr = attr.map_err(RssError::from_display)?;
-        if attr.key.as_ref().eq_ignore_ascii_case(name) {
+        if attr.key.as_ref().as_bytes().eq_ignore_ascii_case(name) {
             let value = attr
-                .decode_and_unescape_value(event.decoder())
+                .normalized_value(XmlVersion::Implicit1_0)
                 .map_err(RssError::from_display)?;
             return Ok(Some(value.trim().to_string()));
         }
