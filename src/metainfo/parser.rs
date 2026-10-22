@@ -1727,6 +1727,7 @@ fn init_subtitle(meta: &mut MetaResult, title_text: &str) {
 }
 
 /// 识别 01-26Fin、01-24 END、01-12完结 等数字范围完结标记。
+/// 识别完结集数的闭区间，并按区间长度记录合集实际集数。
 fn init_episode_range_fin(meta: &mut MetaResult, title_text: &str) {
     let Some(cap) = SUBTITLE_EPISODE_RANGE_FIN_RE.captures(title_text) else {
         return;
