@@ -106,7 +106,7 @@ pub(crate) fn build_meta_path(path: &str, options: &ParseOptions) -> MetaResult 
     file_meta
 }
 
-/// 识别标题是否更像动漫发布名。
+/// 根据集数命名选择动漫解析器，分辨率方括号本身不构成集数证据。
 fn is_anime(name: &str) -> bool {
     if name.is_empty() {
         return false;
@@ -2626,11 +2626,28 @@ fn match_customization(title: &str, regex: Option<&Regex>) -> Option<String> {
 mod tests {
     use super::{
         build_meta_info, build_meta_path, build_release_group_regex, find_explicit_metainfo,
-        match_release_group, merge_meta,
+        is_anime, match_release_group, merge_meta,
     };
     use crate::metainfo::model::{MediaSource, MetaResult};
     use crate::metainfo::ParseOptions;
     use std::collections::HashMap;
+
+    /// 分辨率括号不参与动漫分类，同时保留数字、罗马数字和范围集号。
+    #[test]
+    fn distinguishes_resolution_brackets_from_episode_evidence() {
+        for (left, right) in [("[", "]"), ("【", "】")] {
+            for resolution in ["720p", "1080p", "1080i", "2160P", "1080I"] {
+                assert!(!is_anime(&format!(
+                    "某片名 2026-{left}{resolution}{right}{left}BDRIP{right}"
+                )));
+            }
+            for episode in ["01", "01-12", "01v2", "I", "IV", "1080"] {
+                assert!(is_anime(&format!(
+                    "某番剧{left}{episode}{right}{left}1080p{right}"
+                )));
+            }
+        }
+    }
 
     /// 通用媒体身份字段不是自定义识别词语法，不能形成媒体身份。
     #[test]
