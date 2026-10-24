@@ -1,8 +1,9 @@
 use super::regex::{Regex, RegexBuilder};
 use once_cell::sync::Lazy;
 
+// 分辨率标签中的 p/i 不是集数证据，保持与 Python 解析入口相同的分类边界。
 pub(super) static ANIME_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"【[+0-9XVPI-]+】\s*【")
+    RegexBuilder::new(r"【(?!\d+[PI]】)[+0-9XVPI-]+】\s*【")
         .case_insensitive(true)
         .build()
         .unwrap()
@@ -22,7 +23,7 @@ pub(super) static VIDEO_SEASON_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 pub(super) static ANIME_SQUARE_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"\[[+0-9XVPI-]+]\s*\[")
+    RegexBuilder::new(r"\[(?!\d+[PI]])[+0-9XVPI-]+]\s*\[")
         .case_insensitive(true)
         .build()
         .unwrap()
