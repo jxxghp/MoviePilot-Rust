@@ -2626,7 +2626,7 @@ fn match_customization(title: &str, regex: Option<&Regex>) -> Option<String> {
 mod tests {
     use super::{
         build_meta_info, build_meta_path, build_release_group_regex, find_explicit_metainfo,
-        is_anime, match_release_group, merge_meta,
+        is_anime, is_likely_subtitle_label, match_release_group, merge_meta,
     };
     use crate::metainfo::model::{MediaSource, MetaResult};
     use crate::metainfo::ParseOptions;
@@ -2832,6 +2832,70 @@ mod tests {
         );
 
         assert_eq!(parsed.resource_team.as_deref(), Some("GM-Team"));
+    }
+
+    /// 真实标题中的 Movie 不是分类标签，不能回退成首段字幕组。
+    #[test]
+    fn preserves_movie_title_after_release_group() {
+        let options = ParseOptions::empty();
+        for subtitle in ["CHS", "CHT"] {
+            let title = format!(
+                "[黑白字幕组]我心里危险的东西剧场版 / Boku no Kokoro no Yabai Yatsu Movie \
+                 [2026] [WEB-DL 1080p AVC-8bit AAC][{subtitle}]\
+                 (检索用：我内心的糟糕念头 剧场版)"
+            );
+            let parsed = build_meta_info(&title, None, &options, true);
+            assert_eq!(
+                parsed.en_name.as_deref(),
+                Some("Boku No Kokoro No Yabai Yatsu Movie"),
+                "{title}"
+            );
+            assert_eq!(parsed.year.as_deref(), Some("2026"), "{title}");
+            assert_eq!(parsed.media_type, "电影", "{title}");
+            assert_eq!(parsed.resource_pix.as_deref(), Some("1080p"), "{title}");
+            assert_eq!(parsed.video_encode.as_deref(), Some("AVC"), "{title}");
+            assert_eq!(parsed.video_bit.as_deref(), Some("8bit"), "{title}");
+            assert_eq!(parsed.audio_encode.as_deref(), Some("AAC"), "{title}");
+            assert_eq!(
+                parsed.resource_team.as_deref(),
+                Some("黑白字幕组"),
+                "{title}"
+            );
+            assert_eq!(parsed.begin_season, None, "{title}");
+            assert_eq!(parsed.begin_episode, None, "{title}");
+        }
+    }
+
+    /// 分类标签仍须排除，但相同字词作为片名的一部分时应保留。
+    #[test]
+    fn distinguishes_category_labels_from_title_words() {
+        for label in [
+            "Movie",
+            "TV",
+            "TV Series",
+            "TV 01-26 Fin",
+            "Animation",
+            "Animations(动画片)",
+            "Anime",
+            "7月新番",
+            "月番",
+            "★7月新番",
+            "★04月新番★",
+            "2022年7月番",
+            "22年日剧",
+            "动画",
+        ] {
+            assert!(is_likely_subtitle_label(label), "{label}");
+        }
+        for title in [
+            "Boku no Kokoro no Yabai Yatsu Movie",
+            "The Movie Club",
+            "TV Animation Club",
+            "My Anime Story",
+            "动画之旅",
+        ] {
+            assert!(!is_likely_subtitle_label(title), "{title}");
+        }
     }
 
     /// 路径合并应补齐父目录平台字段，并保持媒体身份来源和 ID 成对继承。
