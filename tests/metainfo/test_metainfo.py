@@ -104,6 +104,70 @@ class MetaInfoPublicEntryTest(TestCase):
                 parsed = moviepilot_rust.parse_metainfo_fast(title, "", build_options())
                 self.assertEqual(parsed["resource_team"], "ADWeb")
 
+    def test_movie_title_after_release_group(self):
+        """完整公开发布名不得因 Movie 片名词回退到字幕组名。"""
+        for subtitle in ("CHS", "CHT"):
+            title = (
+                "[黑白字幕组]我心里危险的东西剧场版 / "
+                "Boku no Kokoro no Yabai Yatsu Movie "
+                f"[2026] [WEB-DL 1080p AVC-8bit AAC][{subtitle}]"
+                "(检索用：我内心的糟糕念头 剧场版)"
+            )
+            for custom_group in (False, True):
+                options = dict(build_options())
+                if custom_group:
+                    options["release_groups"] += "|黑白字幕组"
+                with self.subTest(subtitle=subtitle, custom_group=custom_group):
+                    parsed = moviepilot_rust.parse_metainfo_fast(title, "", options)
+                    self.assertEqual(
+                        parsed["en_name"], "Boku No Kokoro No Yabai Yatsu Movie"
+                    )
+                    self.assertEqual(
+                        parsed["original_name"], "Boku No Kokoro No Yabai Yatsu Movie"
+                    )
+                    self.assertNotEqual(parsed["cn_name"], "黑白字幕组")
+                    self.assertEqual(parsed["type"], "电影")
+                    self.assertEqual(parsed["year"], "2026")
+                    self.assertEqual(parsed["resource_pix"], "1080p")
+                    self.assertEqual(parsed["video_encode"], "AVC")
+                    self.assertEqual(parsed["video_bit"], "8bit")
+                    self.assertEqual(parsed["audio_encode"], "AAC")
+                    self.assertEqual(parsed["resource_team"], "黑白字幕组")
+                    self.assertIsNone(parsed["begin_season"])
+                    self.assertIsNone(parsed["begin_episode"])
+
+    def test_category_words_in_multibracket_titles(self):
+        """中英文和双语标题可包含分类词，独立分类标签仍不应成为片名。"""
+        cases = [
+            ("[星空电影 / Starry Sky Movie][2026]", "Starry Sky Movie", "电影", None, None),
+            ("[Starry Sky Movie / 星空电影][2026]", "Starry Sky Movie", "电影", None, None),
+            ("[Starry Sky Movie][2026]", "Starry Sky Movie", "电影", None, None),
+            ("[动画之旅][2026]", "动画之旅", "电影", None, None),
+            ("[Movie][星空之旅 / Starry Sky][2026]", "Starry Sky", "电影", None, None),
+            (
+                "[TV Series][动画之旅 / Animation Journey][2026][01]",
+                "Animation Journey", "电视剧", None, 1,
+            ),
+            ("[TV Animation Club][2026][01]", "Tv Animation Club", "电视剧", None, 1),
+            (
+                " 星空之旅 / Starry Sky S02E03 [2026]",
+                "星空之旅", "电视剧", 2, 3,
+            ),
+        ]
+        options = dict(build_options())
+        options["release_groups"] += "|测试字幕组"
+        for body, expected_name, media_type, season, episode in cases:
+            title = f"[测试字幕组]{body}[1080p][AVC][AAC][CHS]"
+            with self.subTest(title=title):
+                parsed = moviepilot_rust.parse_metainfo_fast(title, "", options)
+                self.assertEqual(parsed["original_name"], expected_name)
+                self.assertEqual(parsed["year"], "2026")
+                self.assertEqual(parsed["type"], media_type)
+                self.assertEqual(parsed["begin_season"], season)
+                self.assertEqual(parsed["begin_episode"], episode)
+                self.assertEqual(parsed["resource_pix"], "1080p")
+                self.assertEqual(parsed["resource_team"], "测试字幕组")
+
     def test_emby_format_ids(self):
         """同步后端 Emby 格式 tmdbid 路径识别用例。"""
         test_paths = [

@@ -305,7 +305,13 @@ pub(super) static SUBTITLE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 pub(super) static ANIME_CATEGORY_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(新番|月?番|日剧|美剧|动漫|动画|Animation|Animations|Anime|Movie|TV)").unwrap()
+    // 分类词必须占据整个标签，片名中的 Movie、TV、动画等词不应触发标题回退。
+    RegexBuilder::new(
+        r"^[★☆\s]*(?:(?:\d{2,4}年)?(?:\d{1,2}月|月)?新?番|(?:\d{2,4}年)?(?:日剧|美剧)|动漫|动画(?:片)?|Animations?(?:\(动画片\))?|Anime|Movie|TV(?:\s+(?:Series|\d{1,4}(?:-\d{1,4})?(?:\s+Fin)?))?)[★☆\s]*$",
+    )
+    .case_insensitive(true)
+    .build()
+    .unwrap()
 });
 pub(super) static TV_EPISODE_HINT_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"TV\s+(\d{1,4})")
