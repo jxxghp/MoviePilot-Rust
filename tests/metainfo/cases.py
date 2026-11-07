@@ -1054,6 +1054,57 @@ meta_cases = [{
         "fps": None
     }
 }, {
+    "title": "Test.Show.S01E05-E07.mkv",
+    "subtitle": "",
+    "target": {
+        "type": "电视剧",
+        "cn_name": "",
+        "en_name": "Test Show",
+        "year": "",
+        "part": "",
+        "season": "S01",
+        "episode": "E05-E07",
+        "restype": "",
+        "pix": "",
+        "video_codec": "",
+        "audio_codec": "",
+        "fps": None
+    }
+}, {
+    "title": "Test.Show.S01E05-E08.mkv",
+    "subtitle": "",
+    "target": {
+        "type": "电视剧",
+        "cn_name": "",
+        "en_name": "Test Show",
+        "year": "",
+        "part": "",
+        "season": "S01",
+        "episode": "E05-E08",
+        "restype": "",
+        "pix": "",
+        "video_codec": "",
+        "audio_codec": "",
+        "fps": None
+    }
+}, {
+    "path": "/tv/Test.Show.S01E05-E07/Test.Show.S01E05-E07.mkv",
+    "title": "Test.Show.S01E05-E07.mkv",
+    "target": {
+        "type": "电视剧",
+        "cn_name": "",
+        "en_name": "Test Show",
+        "year": "",
+        "part": "",
+        "season": "S01",
+        "episode": "E05-E07",
+        "restype": "",
+        "pix": "",
+        "video_codec": "",
+        "audio_codec": "",
+        "fps": None
+    }
+}, {
     "title": "Shadows of the Void S01 2024 1080p WEB-DL H264 AAC-HHWEB",
     "subtitle": "虚无边境 | 第01-02集 | 1080p | 类型: 动画 | 导演: 巴西 | 主演: 山新/周一菡/皇贞季/Kenz/李佳怡 [内嵌中字]",
     "target": {

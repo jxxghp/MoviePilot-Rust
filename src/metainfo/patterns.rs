@@ -130,10 +130,14 @@ pub(super) static SEASON_PATTERN: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 pub(super) static EPISODE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    RegexBuilder::new(r"EP?(\d{2,4})$|^EP?(\d{1,4})$|^S\d{1,2}EP?(\d{1,4})$|S\d{2}EP?(\d{2,4})")
-        .case_insensitive(true)
-        .build()
-        .unwrap()
+    RegexBuilder::new(
+        // 未锚定入口要求集号标记前不是字母数字，避免把 [7CFEE642] 这类哈希尾号
+        // 识成 E642 集号；-E07、.S01E05 等真实集号形态不受影响。
+        r"(?<!\w)EP?(\d{2,4})$|^EP?(\d{1,4})$|^S\d{1,2}EP?(\d{1,4})$|(?<!\w)S\d{2}EP?(\d{2,4})",
+    )
+    .case_insensitive(true)
+    .build()
+    .unwrap()
 });
 pub(super) static PART_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(

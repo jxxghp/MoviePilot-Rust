@@ -1164,7 +1164,10 @@ fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfil
 }
 
 /// 识别集。
-fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) -> bool {
+///
+/// ``_isfile`` 仅保留调用签名兼容：集号区间是真实交付范围，文件名形态下同样
+/// 完整保留，不再按区间长度丢弃，与 Python 参考实现对齐。
+fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, _isfile: bool) -> bool {
     let mut captures = EPISODE_PATTERN.captures_iter(token).peekable();
     if captures.peek().is_some() {
         state.remember(VideoTokenKind::Episode, None);
@@ -1184,10 +1187,6 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
                     meta.total_episode = meta.end_episode.unwrap_or_default()
                         - meta.begin_episode.unwrap_or_default()
                         + 1;
-                    if isfile && meta.total_episode > 2 {
-                        meta.end_episode = None;
-                        meta.total_episode = 1;
-                    }
                 }
             }
         }
@@ -1203,10 +1202,6 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
             meta.end_episode = value;
             meta.total_episode =
                 meta.end_episode.unwrap_or_default() - meta.begin_episode.unwrap_or_default() + 1;
-            if isfile && meta.total_episode > 2 {
-                meta.end_episode = None;
-                meta.total_episode = 1;
-            }
             meta.media_type = MEDIA_TYPE_TV.to_string();
             true
         } else if (meta.begin_episode.is_none()
