@@ -556,6 +556,39 @@ class MetaInfoPublicEntryTest(TestCase):
         )
         self.assertIn("粤语残片", parsed["cn_name"])
 
+    def test_zero_numeric_title_token_is_preserved_before_markers(self):
+        """片名结尾的单个 0 属于标题，不能被当作噪声词元丢弃。"""
+        titles = [
+            "Example.Show.0.S01E15.2018.1080p.BluRay.x265.10bit.FLAC.2.0.2Audio-GROUP",
+            "Example.Show 0 S01E01",
+            "Example.Show.0.2018.1080p.BluRay-GROUP",
+        ]
+        for title in titles:
+            with self.subTest(title=title):
+                parsed = moviepilot_rust.parse_metainfo_fast(title, "", build_options())
+                self.assertEqual(parsed["en_name"], "Example Show 0")
+
+    def test_zero_fragment_after_number_still_dropped(self):
+        """音轨分数中的前导零不能写进片名。"""
+        cases = {
+            "Example.Movie.2.0.2021.1080p.BluRay.x265-GROUP": "Example Movie 2",
+            "Example.Show.NCED.01.mkv": "Example Show Nced",
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                parsed = moviepilot_rust.parse_metainfo_fast(title, "", build_options())
+                self.assertEqual(parsed["en_name"], expected)
+
+    def test_zero_title_token_in_numeric_prefixed_sequel(self):
+        """纯数字前缀的编号续作同样保留末尾的 0，季集与年份不受影响。"""
+        parsed = moviepilot_rust.parse_metainfo_fast(
+            "ID.0.S01E01.2017.1080p.BluRay.x265.10bit.FLAC.2.0-GROUP", "", build_options()
+        )
+        self.assertEqual(parsed["en_name"], "Id 0")
+        self.assertEqual(parsed["year"], "2017")
+        self.assertEqual(parsed["begin_season"], 1)
+        self.assertEqual(parsed["begin_episode"], 1)
+
 
 if __name__ == "__main__":
     unittest_main = __import__("unittest").main

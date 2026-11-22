@@ -517,7 +517,7 @@ fn parse_video_token(
     if init_part(meta, state, token, tokens) {
         return;
     }
-    if init_name(meta, state, token) {
+    if init_name(meta, state, token, tokens) {
         return;
     }
     if init_year(meta, state, token) {
@@ -882,8 +882,34 @@ fn base_meta(kind: &str, title: &str, subtitle: Option<&str>, isfile: bool) -> M
     }
 }
 
+/// 判断前导零词元是否为片名组成部分。
+///
+/// 仅当词元是单个 "0"、前一个词元不是纯数字、且后面紧跟季、集或年份标记时成立，
+/// 用于保留 "Show 0" 这类编号续作，同时继续过滤 "2.0" 这类音轨分数。
+fn is_zero_title_token(token: &str, tokens: &TokenCursor) -> bool {
+    if token != "0" {
+        return false;
+    }
+    if tokens
+        .prev()
+        .is_some_and(|previous| previous.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return false;
+    }
+    tokens.cur().is_some_and(|next| {
+        SEASON_PATTERN.is_match(&next)
+            || EPISODE_PATTERN.is_match(&next)
+            || (next.len() == 4 && next.chars().all(|ch| ch.is_ascii_digit()))
+    })
+}
+
 /// 处理普通影视标题名称字段；已识别的文件后缀由完整入口在分词前统一剥离。
-fn init_name(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool {
+fn init_name(
+    meta: &mut MetaResult,
+    state: &mut VideoState,
+    token: &str,
+    tokens: &TokenCursor,
+) -> bool {
     if token.is_empty() {
         return false;
     }
@@ -941,7 +967,8 @@ fn init_name(meta: &mut MetaResult, state: &mut VideoState, token: &str) -> bool
             return false;
         }
         if meta_name(meta).is_some() {
-            if token.starts_with('0') {
+            // 单个 "0" 后接季、集或年份标记时属于片名，其余前导零词元仍按噪声丢弃
+            if token.starts_with('0') && !is_zero_title_token(token, tokens) {
                 return false;
             }
             if token.chars().all(|ch| ch.is_ascii_digit())
@@ -2366,6 +2393,14 @@ impl TokenCursor {
     /// 返回当前 token。
     fn cur(&self) -> Option<String> {
         self.tokens.get(self.index).cloned()
+    }
+
+    /// 预读上一个已处理词元。
+    fn prev(&self) -> Option<String> {
+        self.index
+            .checked_sub(2)
+            .and_then(|index| self.tokens.get(index))
+            .cloned()
     }
 
     /// 取出当前 token 并前进。
