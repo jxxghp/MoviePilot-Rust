@@ -151,13 +151,13 @@ jobs:
               manylinux: musllinux_1_1,
             }
           - {
-              os: macos-14,
+              os: macos-15-intel,
               target: x86_64,
               target-triple: x86_64-apple-darwin,
               manylinux: "",
             }
           - {
-              os: macos-14,
+              os: macos-15,
               target: aarch64,
               target-triple: aarch64-apple-darwin,
               manylinux: "",
