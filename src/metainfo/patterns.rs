@@ -104,6 +104,9 @@ pub(super) static FILE_SIZE_RE: Lazy<Regex> = Lazy::new(|| {
 });
 pub(super) static DATE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d{4}[\s._-]\d{1,2}[\s._-]\d{1,2}").unwrap());
+pub(super) static CRC32_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[([0-9A-Fa-f]{8})\]|\(([0-9A-Fa-f]{8})\)|【([0-9A-Fa-f]{8})】").unwrap()
+});
 pub(super) static DIY_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"DIY")
         .case_insensitive(true)
