@@ -109,6 +109,7 @@ pub(super) struct VideoState {
     pub(super) last_token: String,
     pub(super) last_kind: Option<VideoTokenKind>,
     pub(super) pending_name: String,
+    pub(super) bare_digit_episode: bool,
 }
 
 impl VideoState {

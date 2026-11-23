@@ -1197,6 +1197,12 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
         state.remember(VideoTokenKind::Episode, None);
         state.stop_name = true;
         meta.media_type = MEDIA_TYPE_TV.to_string();
+        if state.bare_digit_episode && EXPLICIT_EPISODE_OVERRIDE_RE.is_match(token) {
+            meta.begin_episode = None;
+            meta.end_episode = None;
+            meta.total_episode = 0;
+            state.bare_digit_episode = false;
+        }
         for cap in captures {
             let value = (1..=4).find_map(|index| {
                 cap.get(index)
@@ -1236,18 +1242,27 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
             }
             meta.media_type = MEDIA_TYPE_TV.to_string();
             true
-        } else if (meta.begin_episode.is_none()
+        } else if meta.begin_episode.is_none()
             && token.len() > 1
             && token.len() < 4
             && state.last_kind != Some(VideoTokenKind::Year)
             && state.last_kind != Some(VideoTokenKind::VideoEncode)
-            && token != state.pending_name)
-            || (state.last_kind == Some(VideoTokenKind::EpisodeMarker)
-                && meta.begin_episode.is_none()
-                && token.len() < 5)
+            && token != state.pending_name
         {
             meta.begin_episode = value;
             meta.total_episode = 1;
+            state.bare_digit_episode = true;
+            state.remember(VideoTokenKind::Episode, None);
+            state.stop_name = true;
+            meta.media_type = MEDIA_TYPE_TV.to_string();
+            true
+        } else if state.last_kind == Some(VideoTokenKind::EpisodeMarker)
+            && meta.begin_episode.is_none()
+            && token.len() < 5
+        {
+            meta.begin_episode = value;
+            meta.total_episode = 1;
+            state.bare_digit_episode = false;
             state.remember(VideoTokenKind::Episode, None);
             state.stop_name = true;
             meta.media_type = MEDIA_TYPE_TV.to_string();
@@ -2681,6 +2696,51 @@ mod tests {
                     "某番剧{left}{episode}{right}{left}1080p{right}"
                 )));
             }
+        }
+    }
+
+    /// 片名中的裸数字被猜测为集号后，后续显式 SxxEyy 必须覆盖前置猜测。
+    #[test]
+    fn explicit_episode_overrides_bare_digit_guess() {
+        let options = ParseOptions::empty();
+        for (title, season, ep, ep_end) in [
+            (
+                "Mobile.Suit.Gundam.00.S01E01.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv",
+                Some(1),
+                Some(1),
+                None,
+            ),
+            (
+                "Mobile.Suit.Gundam.00.S01E25.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv",
+                Some(1),
+                Some(25),
+                None,
+            ),
+            (
+                "Mobile.Suit.Gundam.00.S02E24.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv",
+                Some(2),
+                Some(24),
+                None,
+            ),
+            (
+                "The.100.S02E05.1080p.WEB-DL.H264.mkv",
+                Some(2),
+                Some(5),
+                None,
+            ),
+            (
+                "Brooklyn.99.S05E12.1080p.WEB-DL.H264.mkv",
+                Some(5),
+                Some(12),
+                None,
+            ),
+            ("Show.00.S01E01.S01E02.1080p.mkv", Some(1), Some(1), Some(2)),
+            ("Show.01.1080p.WEB-DL.mkv", Some(1), Some(1), None),
+        ] {
+            let parsed = build_meta_info(title, None, &options, false);
+            assert_eq!(parsed.begin_season, season, "title: {title}");
+            assert_eq!(parsed.begin_episode, ep, "title: {title}");
+            assert_eq!(parsed.end_episode, ep_end, "title: {title}");
         }
     }
 
