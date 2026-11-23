@@ -7,6 +7,7 @@ use super::patterns::*;
 use super::regex::Regex;
 use anitomy_pure::elements::Category;
 use anitomy_pure::Parser;
+use fancy_regex::Captures;
 use golia_pinyin::{is_valid_syllable, segment};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -426,6 +427,7 @@ fn parse_video(
         .to_string();
     working_title = strip_file_size(&working_title);
     working_title = DATE_RE.replace_all(&working_title, "").to_string();
+    working_title = strip_crc32_checksum(&working_title);
 
     let mut tokens = TokenCursor::new(&working_title);
     let mut token = tokens.get_next();
@@ -514,6 +516,10 @@ fn parse_video_token(
     isfile: bool,
     options: &ParseOptions,
 ) {
+    if is_crc32_token(token) {
+        state.stop_name = true;
+        return;
+    }
     if init_part(meta, state, token, tokens) {
         return;
     }
@@ -1192,6 +1198,9 @@ fn init_season(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfil
 
 /// 识别集。
 fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfile: bool) -> bool {
+    if is_crc32_token(token) {
+        return false;
+    }
     let mut captures = EPISODE_PATTERN.captures_iter(token).peekable();
     if captures.peek().is_some() {
         state.remember(VideoTokenKind::Episode, None);
@@ -2467,6 +2476,35 @@ fn strip_file_size(value: &str) -> String {
     FILE_SIZE_RE.replace_all(value, "").to_string()
 }
 
+/// 判断词元是否为同时包含数字与十六进制字母的 8 位 CRC32 校验码。
+fn is_crc32_token(token: &str) -> bool {
+    token.len() == 8
+        && token.chars().all(|ch| ch.is_ascii_hexdigit())
+        && token.chars().any(|ch| ch.is_ascii_digit())
+        && token.chars().any(|ch| ch.is_ascii_alphabetic())
+}
+
+/// 剥离括号内的 8 位十六进制 CRC32 校验码，保留纯数字日期与正常片名。
+fn strip_crc32_checksum(value: &str) -> String {
+    CRC32_BRACKET_RE
+        .replace_all(value, |caps: &Captures<'_>| {
+            let checksum = caps
+                .get(1)
+                .or_else(|| caps.get(2))
+                .or_else(|| caps.get(3))
+                .map(|item| item.as_str())
+                .unwrap_or_default();
+            if is_crc32_token(checksum) {
+                String::new()
+            } else {
+                caps.get(0)
+                    .map(|item| item.as_str().to_string())
+                    .unwrap_or_default()
+            }
+        })
+        .to_string()
+}
+
 /// 提取视频位深。
 fn extract_video_bit(value: &str) -> Option<String> {
     VIDEO_BIT_RE
@@ -2682,6 +2720,39 @@ mod tests {
                 )));
             }
         }
+    }
+
+    /// 8 位十六进制 CRC32 校验码不得误触发集数识别，同时保留真实集数与纯数字日期。
+    #[test]
+    fn ignores_crc32_checksum_without_dropping_real_episodes() {
+        use super::MEDIA_TYPE_TV;
+
+        let options = ParseOptions::empty();
+        for title in [
+            "[AI-Raws] 機動戦士ガンダム 第08MS小隊 ノンクレジットOP (BD HEVC 1440x1080 FLAC)[B7858E21].mkv",
+            "[AI-Raws] 機動戦士ガンダム 第08MS小隊 ノンクレジットOP (BD HEVC 1440x1080 FLAC)(B7858E21).mkv",
+            "[AI-Raws] 機動戦士ガンダム 第08MS小隊 ノンクレジットOP (BD HEVC 1440x1080 FLAC)【B7858E21】.mkv",
+            "Show.2026.1080p.BD.FLAC.B7858E21.mkv",
+            "Another.Show.2026.1080p.WEB-DL.[A1F2E005].mkv",
+        ] {
+            let parsed = build_meta_info(title, None, &options, false);
+            assert_eq!(parsed.begin_episode, None, "title: {title}");
+            assert_eq!(parsed.begin_season, None, "title: {title}");
+        }
+
+        let ep = build_meta_info("Show S01E21 [B7858E21].mkv", None, &options, false);
+        assert_eq!(ep.media_type, MEDIA_TYPE_TV);
+        assert_eq!(ep.begin_season, Some(1));
+        assert_eq!(ep.begin_episode, Some(21));
+
+        let dated = build_meta_info(
+            "Movie 2026 (20260101) [A1B2C3D4].mkv",
+            None,
+            &options,
+            false,
+        );
+        assert_eq!(dated.year.as_deref(), Some("2026"));
+        assert_eq!(dated.begin_episode, None);
     }
 
     /// 通用媒体身份字段不是自定义识别词语法，不能形成媒体身份。
