@@ -142,8 +142,12 @@ class MetaInfoPublicEntryTest(TestCase):
             ("Mobile.Suit.Gundam.00.S01E01.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv", 1, 1, None),
             ("Mobile.Suit.Gundam.00.S01E25.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv", 1, 25, None),
             ("Mobile.Suit.Gundam.00.S02E24.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv", 2, 24, None),
+            ("Mobile.Suit.Gundam.00.S01E25.[7CFEE642].mkv", 1, 25, None),
             ("The.100.S02E05.1080p.WEB-DL.H264.mkv", 2, 5, None),
             ("Brooklyn.99.S05E12.1080p.WEB-DL.H264.mkv", 5, 12, None),
+            ("地球百子.100.S02E05.1080p.WEB-DL.H264.mkv", 2, 5, None),
+            ("神烦警探.99.S05E12.1080p.WEB-DL.H264.mkv", 5, 12, None),
+            ("Show.00.01.S01E25.1080p.mkv", 1, 25, None),
             ("Show.00.S01E01.S01E02.1080p.mkv", 1, 1, 2),
             ("Show.01.1080p.WEB-DL.mkv", 1, 1, None),
         ]

@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "moviepilot-rust"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anitomy-pure",
  "chrono",

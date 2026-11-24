@@ -104,6 +104,9 @@ pub(super) static FILE_SIZE_RE: Lazy<Regex> = Lazy::new(|| {
 });
 pub(super) static DATE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d{4}[\s._-]\d{1,2}[\s._-]\d{1,2}").unwrap());
+pub(super) static CRC32_BRACKET_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[([0-9A-Fa-f]{8})\]|\(([0-9A-Fa-f]{8})\)|【([0-9A-Fa-f]{8})】").unwrap()
+});
 pub(super) static DIY_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"DIY")
         .case_insensitive(true)
@@ -135,6 +138,7 @@ pub(super) static EPISODE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         .build()
         .unwrap()
 });
+/// 整词匹配显式 SxxEyy/Exx/EPxx 季集标记，避免非季集子串误清空前置裸数字集号猜测。
 pub(super) static EXPLICIT_EPISODE_OVERRIDE_RE: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(r"^(?:S\d{1,2})?EP?\d{1,4}(?:-?EP?\d{1,4})*$")
         .case_insensitive(true)
