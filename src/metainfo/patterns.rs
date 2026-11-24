@@ -138,6 +138,13 @@ pub(super) static EPISODE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         .build()
         .unwrap()
 });
+/// 整词匹配显式 SxxEyy/Exx/EPxx 季集标记，避免非季集子串误清空前置裸数字集号猜测。
+pub(super) static EXPLICIT_EPISODE_OVERRIDE_RE: Lazy<Regex> = Lazy::new(|| {
+    RegexBuilder::new(r"^(?:S\d{1,2})?EP?\d{1,4}(?:-?EP?\d{1,4})*$")
+        .case_insensitive(true)
+        .build()
+        .unwrap()
+});
 pub(super) static PART_PATTERN: Lazy<Regex> = Lazy::new(|| {
     RegexBuilder::new(
         r"(^PART[0-9ABI]{0,2}$|^CD[0-9]{0,2}$|^DVD[0-9]{0,2}$|^DISK[0-9]{0,2}$|^DISC[0-9]{0,2}$)",

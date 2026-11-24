@@ -99,6 +99,7 @@ pub(super) enum VideoTokenKind {
     Fps,
 }
 
+/// 普通视频词元顺序解析期间的瞬态状态。
 #[derive(Default)]
 pub(super) struct VideoState {
     pub(super) sources: Vec<String>,
@@ -109,6 +110,8 @@ pub(super) struct VideoState {
     pub(super) last_token: String,
     pub(super) last_kind: Option<VideoTokenKind>,
     pub(super) pending_name: String,
+    /// 当前起始集号是否仅由 2-3 位裸数字启发式猜测得出，供后续完整显式季集覆盖。
+    pub(super) bare_digit_episode: bool,
 }
 
 impl VideoState {

@@ -1206,6 +1206,13 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
         state.remember(VideoTokenKind::Episode, None);
         state.stop_name = true;
         meta.media_type = MEDIA_TYPE_TV.to_string();
+        // 仅当后续词元完整匹配显式季集格式时，才覆盖此前由片名裸数字启发式暂猜的集号。
+        if state.bare_digit_episode && EXPLICIT_EPISODE_OVERRIDE_RE.is_match(token) {
+            meta.begin_episode = None;
+            meta.end_episode = None;
+            meta.total_episode = 0;
+            state.bare_digit_episode = false;
+        }
         for cap in captures {
             let value = (1..=4).find_map(|index| {
                 cap.get(index)
@@ -1245,18 +1252,29 @@ fn init_episode(meta: &mut MetaResult, state: &mut VideoState, token: &str, isfi
             }
             meta.media_type = MEDIA_TYPE_TV.to_string();
             true
-        } else if (meta.begin_episode.is_none()
+        } else if meta.begin_episode.is_none()
             && token.len() > 1
             && token.len() < 4
             && state.last_kind != Some(VideoTokenKind::Year)
             && state.last_kind != Some(VideoTokenKind::VideoEncode)
-            && token != state.pending_name)
-            || (state.last_kind == Some(VideoTokenKind::EpisodeMarker)
-                && meta.begin_episode.is_none()
-                && token.len() < 5)
+            && token != state.pending_name
         {
             meta.begin_episode = value;
             meta.total_episode = 1;
+            // 记录该起始集号来自无前导标记的裸数字猜测，允许被后续显式 SxxEyy 覆盖。
+            state.bare_digit_episode = true;
+            state.remember(VideoTokenKind::Episode, None);
+            state.stop_name = true;
+            meta.media_type = MEDIA_TYPE_TV.to_string();
+            true
+        } else if state.last_kind == Some(VideoTokenKind::EpisodeMarker)
+            && meta.begin_episode.is_none()
+            && token.len() < 5
+        {
+            meta.begin_episode = value;
+            meta.total_episode = 1;
+            // 紧随 EPISODE 标记词的数字属于显式声明集号，不应被视为启发式猜测。
+            state.bare_digit_episode = false;
             state.remember(VideoTokenKind::Episode, None);
             state.stop_name = true;
             meta.media_type = MEDIA_TYPE_TV.to_string();
@@ -2753,6 +2771,70 @@ mod tests {
         );
         assert_eq!(dated.year.as_deref(), Some("2026"));
         assert_eq!(dated.begin_episode, None);
+    }
+
+    /// 片名中的裸数字被猜测为集号后，后续显式 SxxEyy 必须覆盖前置猜测。
+    #[test]
+    fn explicit_episode_overrides_bare_digit_guess() {
+        let options = ParseOptions::empty();
+        for (title, season, ep, ep_end) in [
+            (
+                "Mobile.Suit.Gundam.00.S01E01.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv",
+                Some(1),
+                Some(1),
+                None,
+            ),
+            (
+                "Mobile.Suit.Gundam.00.S01E25.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv",
+                Some(1),
+                Some(25),
+                None,
+            ),
+            (
+                "Mobile.Suit.Gundam.00.S02E24.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv",
+                Some(2),
+                Some(24),
+                None,
+            ),
+            (
+                "Mobile.Suit.Gundam.00.S01E25.[7CFEE642].mkv",
+                Some(1),
+                Some(25),
+                None,
+            ),
+            (
+                "The.100.S02E05.1080p.WEB-DL.H264.mkv",
+                Some(2),
+                Some(5),
+                None,
+            ),
+            (
+                "Brooklyn.99.S05E12.1080p.WEB-DL.H264.mkv",
+                Some(5),
+                Some(12),
+                None,
+            ),
+            (
+                "地球百子.100.S02E05.1080p.WEB-DL.H264.mkv",
+                Some(2),
+                Some(5),
+                None,
+            ),
+            (
+                "神烦警探.99.S05E12.1080p.WEB-DL.H264.mkv",
+                Some(5),
+                Some(12),
+                None,
+            ),
+            ("Show.00.01.S01E25.1080p.mkv", Some(1), Some(25), None),
+            ("Show.00.S01E01.S01E02.1080p.mkv", Some(1), Some(1), Some(2)),
+            ("Show.01.1080p.WEB-DL.mkv", Some(1), Some(1), None),
+        ] {
+            let parsed = build_meta_info(title, None, &options, false);
+            assert_eq!(parsed.begin_season, season, "title: {title}");
+            assert_eq!(parsed.begin_episode, ep, "title: {title}");
+            assert_eq!(parsed.end_episode, ep_end, "title: {title}");
+        }
     }
 
     /// 通用媒体身份字段不是自定义识别词语法，不能形成媒体身份。

@@ -136,6 +136,28 @@ class MetaInfoPublicEntryTest(TestCase):
                     self.assertIsNone(parsed["begin_season"])
                     self.assertIsNone(parsed["begin_episode"])
 
+    def test_explicit_episode_overrides_prior_bare_digit_guess(self):
+        """片名含 2-3 位裸数字时，后续显式 SxxEyy 必须覆盖前置误猜集号。"""
+        cases = [
+            ("Mobile.Suit.Gundam.00.S01E01.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv", 1, 1, None),
+            ("Mobile.Suit.Gundam.00.S01E25.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv", 1, 25, None),
+            ("Mobile.Suit.Gundam.00.S02E24.2007.1080p.BluRay.x265.FLAC.2.0-FROGE.mkv", 2, 24, None),
+            ("Mobile.Suit.Gundam.00.S01E25.[7CFEE642].mkv", 1, 25, None),
+            ("The.100.S02E05.1080p.WEB-DL.H264.mkv", 2, 5, None),
+            ("Brooklyn.99.S05E12.1080p.WEB-DL.H264.mkv", 5, 12, None),
+            ("地球百子.100.S02E05.1080p.WEB-DL.H264.mkv", 2, 5, None),
+            ("神烦警探.99.S05E12.1080p.WEB-DL.H264.mkv", 5, 12, None),
+            ("Show.00.01.S01E25.1080p.mkv", 1, 25, None),
+            ("Show.00.S01E01.S01E02.1080p.mkv", 1, 1, 2),
+            ("Show.01.1080p.WEB-DL.mkv", 1, 1, None),
+        ]
+        for title, season, ep, ep_end in cases:
+            with self.subTest(title=title):
+                parsed = moviepilot_rust.parse_metainfo_fast(title, "", build_options())
+                self.assertEqual(parsed["begin_season"], season)
+                self.assertEqual(parsed["begin_episode"], ep)
+                self.assertEqual(parsed["end_episode"], ep_end)
+
     def test_category_words_in_multibracket_titles(self):
         """中英文和双语标题可包含分类词，独立分类标签仍不应成为片名。"""
         cases = [
